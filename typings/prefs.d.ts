@@ -115,6 +115,7 @@ declare namespace _ZoteroTypes {
       "medicalTranslator.temperature": string;
       "medicalTranslator.stream": boolean;
       "medicalTranslator.customGlossary": string;
+      "medicalTranslator.customGlossary": string;
     };
   }
 }
