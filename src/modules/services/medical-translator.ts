@@ -1,6 +1,9 @@
 import { getPref, getString } from "../../utils";
 import { TranslateService } from "./base";
-import { MEDICAL_ABBREVIATIONS, MEDICAL_VOCABULARY } from "./medical-glossary-data";
+import {
+  MEDICAL_ABBREVIATIONS,
+  MEDICAL_VOCABULARY,
+} from "./medical-glossary-data";
 
 /**
  * Build the system prompt with embedded medical glossary data.
