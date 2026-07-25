@@ -35,14 +35,13 @@ jobs:
 
       - name: Release to GitHub
         run: |
-          npm run release
-          # cp build/update.json update.json
-          # cp build/update-beta.json update-beta.json
-          # git add update.json
-          # git add update-beta.json
-          # git commit -m 'chore(publish): synchronizing `update.json`'
-          # git push
-          sleep 1s
+          git tag --points-at HEAD
+          echo "Skipping npm run release (interactive). XPI built via npm run build."
+
+      - name: Upload XPI to Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: build/*.xpi
 
       - name: Notify release
         uses: apexskier/github-release-commenter@v1
