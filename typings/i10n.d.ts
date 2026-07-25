@@ -184,8 +184,6 @@ export type FluentMessageId =
   | 'service-medicaltranslator-dialog-endPoint'
   | 'service-medicaltranslator-dialog-model'
   | 'service-medicaltranslator-dialog-stream'
-  | 'service-medicaltranslator-dialog-customGlossary'
-  | 'service-medicaltranslator-dialog-customGlossary'
   | 'service-medicaltranslator-dialog-temperature'
   | 'service-microsoft'
   | 'service-mtranserver'
