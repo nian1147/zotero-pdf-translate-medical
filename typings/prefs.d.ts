@@ -110,6 +110,10 @@ declare namespace _ZoteroTypes {
       "customGPT1.temperature": string;
       "customGPT2.temperature": string;
       "customGPT3.temperature": string;
+      "medicalTranslator.endPoint": string;
+      "medicalTranslator.model": string;
+      "medicalTranslator.temperature": string;
+      "medicalTranslator.stream": boolean;
     };
   }
 }

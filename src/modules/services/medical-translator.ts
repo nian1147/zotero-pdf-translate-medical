@@ -17,47 +17,111 @@ const CORE_TERMS = [
 ];
 
 /**
- * Find which abbreviations from our glossary appear in the source text.
- * Uses case-insensitive whole-word matching.
+ * Try to extract full-text context from the PDF associated with a Zotero item.
+ * Returns the title + abstract + any extracted note text, up to 30K chars.
  */
-function findMatchingAbbreviations(sourceText: string): Array<[string, readonly [string, string]]> {
-  const textUpper = sourceText.toUpperCase();
+function getPaperContext(itemId: number | undefined): string {
+  if (!itemId) return "";
+
+  try {
+    const item = Zotero.Items.get(itemId);
+    if (!item) return "";
+
+    const topItem = Zotero.Items.getTopLevel([item])[0];
+    if (!topItem) return "";
+
+    const parts: string[] = [];
+
+    const title = topItem.getField("title") as string;
+    if (title) parts.push(`Title: ${title}`);
+
+    const abstract = topItem.getField("abstractNote") as string;
+    if (abstract) parts.push(`Abstract: ${abstract}`);
+
+    // Also try to get the full text from note attachments
+    const attachments = topItem.getAttachments();
+    if (attachments) {
+      for (const attId of attachments) {
+        if (parts.length >= 5) break; // Only take up to 4 notes
+        try {
+          const att = Zotero.Items.get(attId);
+          if (att && att.isNote()) {
+            const noteText = att.getNote();
+            if (noteText) {
+              // Strip HTML tags for cleaner text
+              const cleanText = noteText.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+              if (cleanText && cleanText.length > 50) {
+                parts.push(cleanText);
+              }
+            }
+          }
+        } catch {
+          // Skip invalid attachments silently
+        }
+      }
+    }
+
+    const fullContext = parts.join("\n\n");
+    // Cap at 30K chars to avoid memory issues
+    return fullContext.slice(0, 30000);
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * Find which abbreviations from our glossary appear in the source text
+ * AND the paper context. Uses case-insensitive whole-word matching.
+ */
+function findMatchingAbbreviations(
+  sourceText: string,
+  paperContext: string,
+): Array<[string, readonly [string, string]]> {
+  // Search in both the source text AND the paper context
+  const searchPool = paperContext
+    ? sourceText.toUpperCase() + " " + paperContext.toUpperCase()
+    : sourceText.toUpperCase();
+
   const matches: Array<[string, readonly [string, string]]> = [];
 
   for (const [abbr, entry] of SORTED_ABBREVIATIONS) {
-    // Use word-boundary regex for accurate matching
-    const pattern = new RegExp(`\\b${abbr.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i');
-    if (pattern.test(sourceText)) {
+    const pattern = new RegExp(
+      `\\b${abbr.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`,
+      "i",
+    );
+    if (pattern.test(searchPool)) {
       matches.push([abbr, entry]);
     }
-    if (matches.length >= 200) break; // Cap at 200 matches to prevent huge prompts
+    if (matches.length >= 200) break;
   }
 
-  // If we found matches, return them. Otherwise include core terms as baseline.
   if (matches.length > 0) {
     return matches;
   }
 
-  // Fallback: include high-frequency core terms
   return SORTED_ABBREVIATIONS.filter(([abbr]) => CORE_TERMS.includes(abbr));
 }
 
 /**
- * Find which vocabulary terms appear in the source text.
+ * Find which vocabulary terms appear in the source text AND paper context.
  */
-function findMatchingVocabulary(sourceText: string): Array<[string, string]> {
-  const textLower = sourceText.toLowerCase();
+function findMatchingVocabulary(
+  sourceText: string,
+  paperContext: string,
+): Array<[string, string]> {
+  const searchPool = paperContext
+    ? sourceText.toLowerCase() + " " + paperContext.toLowerCase()
+    : sourceText.toLowerCase();
+
   const matches: Array<[string, string]> = [];
 
   for (const [en, cn] of SORTED_VOCABULARY) {
-    // Only match multi-word terms or terms longer than 4 chars to avoid noise
-    if ((en.includes(" ") || en.length > 4) && textLower.includes(en)) {
+    if ((en.includes(" ") || en.length > 4) && searchPool.includes(en)) {
       matches.push([en, cn]);
     }
     if (matches.length >= 100) break;
   }
 
-  // If no matches, include top 50 most common terms as baseline
   if (matches.length === 0) {
     return SORTED_VOCABULARY.slice(0, 50);
   }
@@ -67,12 +131,11 @@ function findMatchingVocabulary(sourceText: string): Array<[string, string]> {
 
 /**
  * Build the system prompt with ONLY the matching glossary terms for this text.
- * This reduces the prompt from ~100K tokens to ~2-5K tokens, dramatically
- * improving response speed.
+ * Uses both the selected text AND the full paper context for matching.
  */
-function buildSystemPrompt(sourceText: string): string {
-  const matchedAbbrs = findMatchingAbbreviations(sourceText);
-  const matchedVocab = findMatchingVocabulary(sourceText);
+function buildSystemPrompt(sourceText: string, paperContext: string): string {
+  const matchedAbbrs = findMatchingAbbreviations(sourceText, paperContext);
+  const matchedVocab = findMatchingVocabulary(sourceText, paperContext);
 
   const termRef = matchedAbbrs
     .map(([abbr, [fullEn, fullCn]]) => `${abbr}: ${fullEn} -> ${fullCn}`)
@@ -82,17 +145,22 @@ function buildSystemPrompt(sourceText: string): string {
     .map(([en, cn]) => `${en} -> ${cn}`)
     .join("\n");
 
+  const contextIntro = paperContext
+    ? `\n\n以下为当前文献的全文上下文，用于理解术语含义（非原文，仅用于术语辅助匹配）：\n${paperContext.slice(0, 1000)}`
+    : "";
+
   return `你是一位资深医学翻译专家，专门为医学院校学生、临床规培医师和科研初学者服务。
 
 你的核心任务：将英文医学文献翻译为中文，严格遵循以下规则：
 
 1. **术语标准化**：优先使用《医学主题词表》(MeSH/CMeSH)中的标准译名。
 
-以下是文中涉及的医学缩写对照参考（已自动匹配原文中出现的术语）：
+以下是文中涉及的医学缩写对照参考（已自动匹配原文及全文中出现的术语）：
 ${termRef}
 
 以下是文中涉及的通用医学术语对照参考：
 ${vocabRef}
+${contextIntro}
 
 2. **缩写处理**：翻译中遇到的医学缩写，使用格式【缩写：英文全称，中文全称】标注。
 
@@ -153,8 +221,11 @@ async function translate(
     refreshHandler();
   }
 
-  // Build prompt with smart glossary matching based on source text
-  const systemPrompt = buildSystemPrompt(data.raw);
+  // Extract paper context (title + abstract + notes) for better term matching
+  const paperContext = getPaperContext(data.itemId);
+
+  // Build prompt with smart glossary matching using BOTH selected text + full paper
+  const systemPrompt = buildSystemPrompt(data.raw, paperContext);
   const userContent = `请翻译以下英文医学文献段落：\n\n${data.raw}`;
 
   const requestBody = {
