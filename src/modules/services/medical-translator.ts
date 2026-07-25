@@ -6,6 +6,7 @@ import {
   ABBREVIATION_DISCIPLINES,
   VOCABULARY_DISCIPLINES,
   MAJOR_DISCIPLINES,
+  initGlossaryData,
 } from "./medical-glossary-data";
 
 // ── Discipline pre-index ──
@@ -605,7 +606,41 @@ async function translate(
   );
   const stream = (getPref("medicalTranslator.stream") as boolean) ?? true;
 
-  // ── Step 0: Check translation cache ──
+  // Step 0: Lazy-load glossary data (prevents 594KB TS file from crashing startup)
+  initGlossaryData();
+
+  // Rebuild pre-built sorted arrays (populated after initGlossaryData)
+  if (SORTED_ABBREVIATIONS.length === 0) {
+    SORTED_ABBREVIATIONS.length = 0;
+    SORTED_ABBREVIATIONS.push(...Array.from(MEDICAL_ABBREVIATIONS.entries())
+      .sort(([a], [b]) => a.toUpperCase().localeCompare(b.toUpperCase())));
+    SORTED_VOCABULARY.length = 0;
+    SORTED_VOCABULARY.push(...Array.from(MEDICAL_VOCABULARY.entries())
+      .sort(([a], [b]) => a.localeCompare(b)));
+    // Rebuild discipline indexes
+    const dabbr = DISCIPLINE_ABBR_INDEX as Map<string, Set<string>>;
+    dabbr.clear();
+    for (const [abbr] of SORTED_ABBREVIATIONS) {
+      const discs = ABBREVIATION_DISCIPLINES.get(abbr);
+      if (!discs) continue;
+      for (const disc of discs) {
+        let set = dabbr.get(disc);
+        if (!set) { set = new Set(); dabbr.set(disc, set); }
+        set.add(abbr);
+      }
+    }
+    const dvocab = DISCIPLINE_VOCAB_INDEX as Map<string, Set<string>>;
+    dvocab.clear();
+    for (const [en] of SORTED_VOCABULARY) {
+      const discs = VOCABULARY_DISCIPLINES.get(en);
+      if (!discs) continue;
+      for (const disc of discs) {
+        let set = dvocab.get(disc);
+        if (!set) { set = new Set(); dvocab.set(disc, set); }
+        set.add(en);
+      }
+    }
+  }
   // Cache key: raw text + language pair + model (temperature-insensitive for hit rate)
   const cacheKey = `${data.raw}|${data.langfrom || "en"}|${data.langto || "zh-CN"}|${model}`;
   const cached = translationCache.get(cacheKey);
