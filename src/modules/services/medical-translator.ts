@@ -2,21 +2,83 @@ import { getPref, getString } from "../../utils";
 import { TranslateService } from "./base";
 import { MEDICAL_ABBREVIATIONS, MEDICAL_VOCABULARY } from "./medical-glossary-data";
 
+// ── Pre-built sorted entries (computed once on module load) ──
+const SORTED_ABBREVIATIONS = Array.from(MEDICAL_ABBREVIATIONS.entries())
+  .sort(([a], [b]) => a.toUpperCase().localeCompare(b.toUpperCase()));
+
+const SORTED_VOCABULARY = Array.from(MEDICAL_VOCABULARY.entries())
+  .sort(([a], [b]) => a.localeCompare(b));
+
+// ── High-frequency core terms (always included as fallback) ──
+const CORE_TERMS = [
+  "STEMI", "NSTEMI", "PCI", "CABG", "ACS", "HF", "AF", "MI", "HTN",
+  "COPD", "ARDS", "CVA", "TIA", "MRI", "CT", "PET", "DM", "RCT",
+  "OS", "PFS", "LVEF", "MACE", "CAD", "PE", "OSA", "CKD", "IBD",
+];
+
 /**
- * Build the system prompt with embedded medical glossary data.
- * Matches the prompt logic from the Streamlit app's translate_text function.
+ * Find which abbreviations from our glossary appear in the source text.
+ * Uses case-insensitive whole-word matching.
  */
-function buildSystemPrompt(): string {
-  // Build abbreviation reference (all entries, sorted by abbreviation)
-  const termRef = Array.from(MEDICAL_ABBREVIATIONS.entries())
-    .sort(([a], [b]) => a.toUpperCase().localeCompare(b.toUpperCase()))
+function findMatchingAbbreviations(sourceText: string): Array<[string, readonly [string, string]]> {
+  const textUpper = sourceText.toUpperCase();
+  const matches: Array<[string, readonly [string, string]]> = [];
+
+  for (const [abbr, entry] of SORTED_ABBREVIATIONS) {
+    // Use word-boundary regex for accurate matching
+    const pattern = new RegExp(`\\b${abbr.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i');
+    if (pattern.test(sourceText)) {
+      matches.push([abbr, entry]);
+    }
+    if (matches.length >= 200) break; // Cap at 200 matches to prevent huge prompts
+  }
+
+  // If we found matches, return them. Otherwise include core terms as baseline.
+  if (matches.length > 0) {
+    return matches;
+  }
+
+  // Fallback: include high-frequency core terms
+  return SORTED_ABBREVIATIONS.filter(([abbr]) => CORE_TERMS.includes(abbr));
+}
+
+/**
+ * Find which vocabulary terms appear in the source text.
+ */
+function findMatchingVocabulary(sourceText: string): Array<[string, string]> {
+  const textLower = sourceText.toLowerCase();
+  const matches: Array<[string, string]> = [];
+
+  for (const [en, cn] of SORTED_VOCABULARY) {
+    // Only match multi-word terms or terms longer than 4 chars to avoid noise
+    if ((en.includes(" ") || en.length > 4) && textLower.includes(en)) {
+      matches.push([en, cn]);
+    }
+    if (matches.length >= 100) break;
+  }
+
+  // If no matches, include top 50 most common terms as baseline
+  if (matches.length === 0) {
+    return SORTED_VOCABULARY.slice(0, 50);
+  }
+
+  return matches;
+}
+
+/**
+ * Build the system prompt with ONLY the matching glossary terms for this text.
+ * This reduces the prompt from ~100K tokens to ~2-5K tokens, dramatically
+ * improving response speed.
+ */
+function buildSystemPrompt(sourceText: string): string {
+  const matchedAbbrs = findMatchingAbbreviations(sourceText);
+  const matchedVocab = findMatchingVocabulary(sourceText);
+
+  const termRef = matchedAbbrs
     .map(([abbr, [fullEn, fullCn]]) => `${abbr}: ${fullEn} -> ${fullCn}`)
     .join("\n");
 
-  // Build vocabulary reference (sampled to 500 entries, sorted)
-  const vocabItems = Array.from(MEDICAL_VOCABULARY.entries())
-    .slice(0, 500)
-    .sort(([a], [b]) => a.localeCompare(b))
+  const vocabRef = matchedVocab
     .map(([en, cn]) => `${en} -> ${cn}`)
     .join("\n");
 
@@ -26,11 +88,11 @@ function buildSystemPrompt(): string {
 
 1. **术语标准化**：优先使用《医学主题词表》(MeSH/CMeSH)中的标准译名。
 
-以下是常见医学缩写对照参考：
+以下是文中涉及的医学缩写对照参考（已自动匹配原文中出现的术语）：
 ${termRef}
 
-以下是通用医学术语对照参考：
-${vocabItems}
+以下是文中涉及的通用医学术语对照参考：
+${vocabRef}
 
 2. **缩写处理**：翻译中遇到的医学缩写，使用格式【缩写：英文全称，中文全称】标注。
 
@@ -86,13 +148,13 @@ async function translate(
 
   const refreshHandler = addon.api.getTemporaryRefreshHandler({ task: data });
 
-  // Show "Translating..." for non-streaming mode
   if (stream === false) {
     data.result = getString("status-translating");
     refreshHandler();
   }
 
-  const systemPrompt = buildSystemPrompt();
+  // Build prompt with smart glossary matching based on source text
+  const systemPrompt = buildSystemPrompt(data.raw);
   const userContent = `请翻译以下英文医学文献段落：\n\n${data.raw}`;
 
   const requestBody = {
@@ -105,9 +167,6 @@ async function translate(
     stream,
   };
 
-  /**
-   * Streaming callback — parses SSE data: lines
-   */
   const streamCallback = (xmlhttp: XMLHttpRequest) => {
     let preLength = 0;
     let result = "";
@@ -132,7 +191,6 @@ async function translate(
             break;
           }
         } catch {
-          // Incomplete JSON fragment — save for next iteration
           if (i === dataArray.length - 1) {
             buffer = "data:" + chunk;
           }
@@ -140,7 +198,6 @@ async function translate(
         }
       }
 
-      // Clear timeouts caused by stream transfers
       if (e.target.timeout) {
         e.target.timeout = 0;
       }
@@ -152,9 +209,6 @@ async function translate(
     };
   };
 
-  /**
-   * Non-streaming callback — handles complete response at once
-   */
   const nonStreamCallback = (xmlhttp: XMLHttpRequest) => {
     xmlhttp.onload = () => {
       try {
