@@ -180,6 +180,7 @@ export type FluentMessageId =
   | 'service-manageKeys-save'
   | 'service-manageKeys-title'
   | 'service-medical-translator'
+  | 'service-medicaltranslator-dialog-customGlossary'
   | 'service-medicaltranslator-dialog-endPoint'
   | 'service-medicaltranslator-dialog-model'
   | 'service-medicaltranslator-dialog-stream'

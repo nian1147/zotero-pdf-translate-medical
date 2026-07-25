@@ -127,6 +127,7 @@ service-medicaltranslator-dialog-endPoint=API 端点
 service-medicaltranslator-dialog-model=模型
 service-medicaltranslator-dialog-temperature=温度
 service-medicaltranslator-dialog-stream=启用流式输出
+service-medicaltranslator-dialog-customGlossary=自定义术语对照表
 
 service-cnki-settings=设置
 service-cnki-dialog-regex=CNKI广告移除正则表达式

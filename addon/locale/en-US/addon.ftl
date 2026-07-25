@@ -127,6 +127,7 @@ service-medicaltranslator-dialog-endPoint=API Endpoint
 service-medicaltranslator-dialog-model=Model
 service-medicaltranslator-dialog-temperature=Temperature
 service-medicaltranslator-dialog-stream=Enable Streaming
+service-medicaltranslator-dialog-customGlossary=Custom Glossary
 
 service-cnki-settings=Settings
 service-cnki-dialog-regex=CNKI Addvertisements Regex

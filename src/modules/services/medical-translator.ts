@@ -22,17 +22,89 @@ const CORE_TERMS = [
   "OS", "PFS", "LVEF", "MACE", "CAD", "PE", "OSA", "CKD", "IBD",
 ];
 
-// ── "Always-include" disciplines ──
-// These disciplines' terms are always added to the prompt regardless of the
-// detected specialty, because they are universal to all medical papers:
-//   公共卫生  = medical statistics / epidemiology / study design terms
-//   基础医学  = basic sciences (cell biology, genetics, molecular biology)
-//   药理学    = pharmacology (drug names, PK/PD terms appear everywhere)
+// ── "Always-include" disciplines (universal glossary) ──
 const UNIVERSAL_DISCIPLINES = new Set([
   "公共卫生",
   "基础医学",
   "药理学",
 ]);
+
+// ── Translation cache ──
+// Key: `${raw}|${langfrom}|${langto}|${model}`, Value: translated text
+// Persisted across session via Zotero prefs, max 200 entries
+const CACHE_PREF_KEY = "medicalTranslator.cache";
+const MAX_CACHE_ENTRIES = 200;
+
+interface CacheEntry {
+  result: string;
+  timestamp: number;
+}
+
+function loadCache(): Map<string, CacheEntry> {
+  try {
+    const raw = getPref(CACHE_PREF_KEY) as string;
+    if (!raw) return new Map();
+    const parsed = JSON.parse(raw);
+    const map = new Map<string, CacheEntry>();
+    for (const [k, v] of Object.entries(parsed)) {
+      map.set(k, v as CacheEntry);
+    }
+    return map;
+  } catch {
+    return new Map();
+  }
+}
+
+function saveCache(cache: Map<string, CacheEntry>): void {
+  try {
+    // Trim oldest entries if over limit
+    if (cache.size > MAX_CACHE_ENTRIES) {
+      const sorted = [...cache.entries()]
+        .sort(([, a], [, b]) => a.timestamp - b.timestamp);
+      for (const [k] of sorted.slice(0, cache.size - MAX_CACHE_ENTRIES)) {
+        cache.delete(k);
+      }
+    }
+    const obj: Record<string, CacheEntry> = {};
+    for (const [k, v] of cache) {
+      obj[k] = v;
+    }
+    // Use Zotero.Prefs.set directly to handle large JSON
+    Zotero.Prefs.set(`extensions.zotero.ZoteroPDFTranslate.${CACHE_PREF_KEY}`, JSON.stringify(obj), true);
+  } catch {
+    // Cache persistence failed silently — non-critical
+  }
+}
+
+// ── Custom glossary ──
+function loadCustomGlossary(): Map<string, string> {
+  try {
+    const raw = (getPref("medicalTranslator.customGlossary") as string) || "";
+    if (!raw.trim()) return new Map();
+    const map = new Map<string, string>();
+    for (const line of raw.split("\n")) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith("#") || trimmed.startsWith("//")) continue;
+      // Parse: English term / abbreviation → Chinese translation
+      // Supported formats: "STEMI → ST段抬高型心肌梗死" or "STEMI:ST段抬高型心肌梗死" or "STEMI,ST段抬高型心肌梗死"
+      const parts = trimmed.split(/\s*[:：=→>,-]\s*/);
+      if (parts.length >= 2) {
+        const en = parts[0].trim();
+        const cn = parts.slice(1).join(":").trim(); // Re-join in case of ":" in CN text
+        if (en && cn) {
+          map.set(en, cn);
+          map.set(en.toLowerCase(), cn); // case-insensitive alias
+        }
+      }
+    }
+    return map;
+  } catch {
+    return new Map();
+  }
+}
+
+// Runtime cache (refreshed from prefs on each module load)
+const translationCache = loadCache();
 
 /**
  * Extract paper context (title + abstract + notes) for term matching.
@@ -300,17 +372,30 @@ function buildSystemPrompt(
   sourceText: string,
   paperContext: string,
   disciplines: string[],
+  customGlossary: Map<string, string>,
 ): string {
   const matchedAbbrs = findMatchingAbbreviations(sourceText, paperContext, disciplines);
   const matchedVocab = findMatchingVocabulary(sourceText, paperContext, disciplines);
 
-  const termRef = matchedAbbrs
+  let termRef = matchedAbbrs
     .map(([abbr, [fullEn, fullCn]]) => `${abbr}: ${fullEn} -> ${fullCn}`)
     .join("\n");
 
-  const vocabRef = matchedVocab
+  let vocabRef = matchedVocab
     .map(([en, cn]) => `${en} -> ${cn}`)
     .join("\n");
+
+  // Inject custom glossary entries at the top — these take priority
+  if (customGlossary.size > 0) {
+    const customRef = Array.from(customGlossary.entries())
+      .filter(([k]) => k === k.toUpperCase() || k.includes(" ")) // abbr or multi-word
+      .slice(0, 100)
+      .map(([en, cn]) => `${en} -> ${cn}`)
+      .join("\n");
+    if (customRef) {
+      termRef = `【用户自定义术语（最高优先级）】\n${customRef}\n\n【系统词库】\n${termRef}`;
+    }
+  }
 
   const discInfo = disciplines.length > 0
     ? `\n\n当前文献已自动识别为：${disciplines.join("、")}相关领域。请优先使用该领域的标准术语。`
@@ -354,11 +439,51 @@ ${contextIntro}
 function postProcessAbbreviationConsistency(
   resultText: string,
   matchedAbbrs: Array<[string, readonly [string, string]]>,
+  customGlossary: Map<string, string>,
 ): string {
   let corrected = resultText;
+
+  // ── Step 1: Force-apply custom glossary replacements ──
+  // Custom glossary takes absolute priority — if the user explicitly provided
+  // a translation, we apply it directly to the output text.
+  if (customGlossary.size > 0) {
+    for (const [en, customCn] of customGlossary) {
+      // For abbreviation-style entries (all caps): replace "[ABBR: ...]" patterns
+      if (en === en.toUpperCase() && en.length <= 10) {
+        const escaped = en.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        // Replace "【ABBR：..."  or "ABBR：" patterns
+        const bracketPattern = new RegExp(
+          `【${escaped}[：:][^】]*】`,
+          "gi",
+        );
+        corrected = corrected.replace(bracketPattern, `【${en}：${customCn}】`);
+        // Also replace bare "ABBR：translation" patterns
+        const barePattern = new RegExp(
+          `(?<![A-Za-z])${escaped}[：:]\\s*[\\u4e00-\\u9fff]{2,20}`,
+          "gi",
+        );
+        corrected = corrected.replace(barePattern, `${en}：${customCn}`);
+      }
+      // For vocabulary-style entries (multi-word English): replace Chinese term
+      if (en.includes(" ") || en.length > 4) {
+        // Find the default translation from our glossary
+        const defaultCn = MEDICAL_VOCABULARY.get(en.toLowerCase());
+        if (defaultCn && defaultCn !== customCn) {
+          // Replace the default Chinese term with the custom one
+          const escaped = defaultCn.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+          corrected = corrected.replace(new RegExp(escaped, "g"), customCn);
+        }
+      }
+    }
+  }
+
+  // ── Step 2: Consistency check against glossary ──
   const corrections: string[] = [];
 
   for (const [abbr, [fullEn, standardCn]] of matchedAbbrs) {
+    // Skip if custom glossary already handled this
+    if (customGlossary.has(abbr) || customGlossary.has(abbr.toLowerCase())) continue;
+
     const abbrEscaped = abbr.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     const pattern = new RegExp(
       `${abbrEscaped}([\\s\\S]{0,80}?)([\\u4e00-\\u9fff]{2,20})`,
@@ -426,6 +551,17 @@ async function translate(
   );
   const stream = (getPref("medicalTranslator.stream") as boolean) ?? true;
 
+  // ── Step 0: Check translation cache ──
+  // Cache key: raw text + language pair + model (temperature-insensitive for hit rate)
+  const cacheKey = `${data.raw}|${data.langfrom || "en"}|${data.langto || "zh-CN"}|${model}`;
+  const cached = translationCache.get(cacheKey);
+  if (cached) {
+    cached.timestamp = Date.now();
+    data.result = cached.result;
+    data.status = "success";
+    return;
+  }
+
   const refreshHandler = addon.api.getTemporaryRefreshHandler({ task: data });
 
   if (stream === false) {
@@ -433,14 +569,17 @@ async function translate(
     refreshHandler();
   }
 
-  // Step 1: Extract paper context
+  // Step 1: Extract paper context and load glossaries
   const paperContext = getPaperContext(data.itemId);
+
+  // Step 1.5: Load custom glossary
+  const customGlossary = loadCustomGlossary();
 
   // Step 2: Classify paper discipline using PURE LOCAL keyword-scoring (no API, zero latency)
   const disciplines = classifyPaperLocal(data.raw, paperContext);
 
-  // Step 3: Build prompt with discipline-filtered glossary
-  const systemPrompt = buildSystemPrompt(data.raw, paperContext, disciplines);
+  // Step 3: Build prompt with discipline-filtered glossary + custom glossary
+  const systemPrompt = buildSystemPrompt(data.raw, paperContext, disciplines, customGlossary);
   const userContent = `请翻译以下英文医学文献段落：\n\n${data.raw}`;
 
   const requestBody = {
@@ -528,9 +667,14 @@ async function translate(
     throw `Request error: ${xhr?.status}`;
   }
 
-  // Step 4: Post-process consistency check
+  // Step 4: Post-process consistency check + custom glossary enforcement
   const matchedAbbrs = findMatchingAbbreviations(data.raw, paperContext, disciplines);
-  data.result = postProcessAbbreviationConsistency(data.result, matchedAbbrs);
+  data.result = postProcessAbbreviationConsistency(data.result, matchedAbbrs, customGlossary);
+
+  // Step 5: Save to translation cache
+  translationCache.set(cacheKey, { result: data.result, timestamp: Date.now() });
+  saveCache(translationCache);
+
   data.status = "success";
 }
 
@@ -576,6 +720,15 @@ export const MedicalTranslator: TranslateService = {
       .addCheckboxSetting({
         prefKey: "medicalTranslator.stream",
         nameKey: "service-medicaltranslator-dialog-stream",
+      })
+      .addTextAreaSetting({
+        prefKey: "medicalTranslator.customGlossary",
+        nameKey: "service-medicaltranslator-dialog-customGlossary",
+        placeholder: `# 自定义术语对照表（一行一条，优先级最高）
+# 格式：英文缩写或术语 → 中文译名
+MACE → 主要心血管不良事件
+PCI → 经皮冠状动脉介入治疗
+myocardial infarction → 心肌梗死`,
       });
   },
 };
