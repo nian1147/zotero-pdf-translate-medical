@@ -12,6 +12,7 @@ import {
 import { Aliyun } from "./aliyun";
 import { Tencent } from "./tencent";
 import { ChatGPT, customGPT1, customGPT2, customGPT3, azureGPT } from "./gpt";
+import { MedicalTranslator } from "./medical-translator";
 import { Baidu } from "./baidu";
 import { BaiduField } from "./baidufield";
 import { Bing } from "./bing";
@@ -75,6 +76,7 @@ const register: TranslateService[] = [
   azureGPT,
   Haici,
   HaiciDict,
+  MedicalTranslator,
   Huoshan,
   HuoshanWeb,
   LibreTranslate,

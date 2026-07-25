@@ -29,6 +29,7 @@ service-customgpt3=Custom GPT 3
 service-azuregpt=AzureGPT
 service-gemini=Gemini
 service-qwenmt=Qwen-MT
+service-medical-translator=Medical Translator (DeepSeek)
 service-claude=Claude
 service-haici=Haici
 service-bing=Bing
@@ -121,6 +122,11 @@ service-claude-dialog-temperature=Temp
 service-claude-dialog-prompt=Prompt
 service-claude-dialog-stream=Stream
 service-claude-dialog-maxTokens=Max Tokens
+
+service-medicaltranslator-dialog-endPoint=API Endpoint
+service-medicaltranslator-dialog-model=Model
+service-medicaltranslator-dialog-temperature=Temperature
+service-medicaltranslator-dialog-stream=Enable Streaming
 
 service-cnki-settings=Settings
 service-cnki-dialog-regex=CNKI Addvertisements Regex

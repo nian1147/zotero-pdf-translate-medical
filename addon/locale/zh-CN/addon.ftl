@@ -29,6 +29,7 @@ service-customgpt3=自定义GPT3
 service-azuregpt=AzureGPT
 service-gemini=Gemini
 service-qwenmt=Qwen-MT
+service-medical-translator=医学翻译 (DeepSeek)
 service-claude=Claude
 service-haici=海词
 service-bing=必应
@@ -121,6 +122,11 @@ service-claude-dialog-temperature=温度
 service-claude-dialog-prompt=提示词
 service-claude-dialog-stream=流式输出
 service-claude-dialog-maxTokens=最大输出长度
+
+service-medicaltranslator-dialog-endPoint=API 端点
+service-medicaltranslator-dialog-model=模型
+service-medicaltranslator-dialog-temperature=温度
+service-medicaltranslator-dialog-stream=启用流式输出
 
 service-cnki-settings=设置
 service-cnki-dialog-regex=CNKI广告移除正则表达式
