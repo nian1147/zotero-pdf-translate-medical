@@ -8,7 +8,65 @@ import {
   MAJOR_DISCIPLINES,
 } from "./medical-glossary-data";
 
-// ── Pre-built sorted entries (computed once on module load) ──
+// ── Discipline pre-index ──
+// Pre-build discipline→abbreviation lookups so classification and matching
+// are O(1) instead of O(3000) per operation.
+function buildDisciplineAbbrIndex(): Map<string, Set<string>> {
+  const index = new Map<string, Set<string>>();
+  for (const [abbr] of SORTED_ABBREVIATIONS) {
+    const discs = ABBREVIATION_DISCIPLINES.get(abbr);
+    if (!discs) continue;
+    for (const disc of discs) {
+      let set = index.get(disc);
+      if (!set) {
+        set = new Set();
+        index.set(disc, set);
+      }
+      set.add(abbr);
+    }
+  }
+  return index;
+}
+function buildDisciplineVocabIndex(): Map<string, Set<string>> {
+  const index = new Map<string, Set<string>>();
+  for (const [en] of SORTED_VOCABULARY) {
+    const discs = VOCABULARY_DISCIPLINES.get(en);
+    if (!discs) continue;
+    for (const disc of discs) {
+      let set = index.get(disc);
+      if (!set) {
+        set = new Set();
+        index.set(disc, set);
+      }
+      set.add(en);
+    }
+  }
+  return index;
+}
+const DISCIPLINE_ABBR_INDEX = buildDisciplineAbbrIndex();
+const DISCIPLINE_VOCAB_INDEX = buildDisciplineVocabIndex();
+
+/**
+ * Fast text scanner: find all abbreviations in the search pool with a single
+ * regex pass instead of 3000 individual regex.test calls.
+ */
+function fastScanAbbreviations(searchPool: string): Set<string> {
+  const found = new Set<string>();
+  // Build a single mega-regex with all abbreviations (limited to avoid ReDoS)
+  // Scan in batches of 500 patterns to stay within regex engine limits
+  for (let i = 0; i < SORTED_ABBREVIATIONS.length; i += 500) {
+    const batch = SORTED_ABBREVIATIONS.slice(i, i + 500);
+    const pattern = new RegExp(
+      batch.map(([a]) => `\\b${a.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`).join("|"),
+      "gi",
+    );
+    let m;
+    while ((m = pattern.exec(searchPool)) !== null) {
+      found.add(m[0].toUpperCase());
+    }
+  }
+  return found;
+}
 const SORTED_ABBREVIATIONS = Array.from(MEDICAL_ABBREVIATIONS.entries())
   .sort(([a], [b]) => a.toUpperCase().localeCompare(b.toUpperCase()));
 
@@ -173,7 +231,10 @@ function classifyPaperLocal(
   const searchPool = (sourceText + " " + paperContext).toUpperCase();
   const searchPoolLower = (sourceText + " " + paperContext).toLowerCase();
 
-  // Chinese discipline keyword triggers (appear in title/abstract often)
+  // Fast scan: find all abbreviations in the text in one pass
+  const foundAbbrs = fastScanAbbreviations(searchPool);
+
+  // Chinese discipline keyword triggers
   const CN_DISC_KEYWORDS: Record<string, string[]> = {
     "心血管系统": ["心血管", "心脏", "冠状动脉", "心肌", "血压", "血管", "动脉", "静脉"],
     "呼吸系统": ["呼吸", "肺", "支气管", "哮喘", "慢阻肺", "COPD", "肺炎", "结核"],
@@ -202,17 +263,14 @@ function classifyPaperLocal(
   for (const disc of MAJOR_DISCIPLINES) {
     let score = 0;
 
-    // 1. Abbreviation hits in the text
-    for (const [abbr] of SORTED_ABBREVIATIONS) {
-      const abbrDiscs = ABBREVIATION_DISCIPLINES.get(abbr);
-      if (!abbrDiscs || !abbrDiscs.includes(disc)) continue;
-
-      const pattern = new RegExp(
-        `\\b${abbr.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`,
-        "i",
-      );
-      if (pattern.test(searchPool)) {
-        score += 1;
+    // 1. Abbreviation hits: count how many abbreviations from this discipline
+    //    were found in the text (O(1) lookup per discipline)
+    const discAbbrs = DISCIPLINE_ABBR_INDEX.get(disc);
+    if (discAbbrs) {
+      for (const abbr of discAbbrs) {
+        if (foundAbbrs.has(abbr)) {
+          score += 1;
+        }
       }
     }
 
@@ -273,33 +331,29 @@ function findMatchingAbbreviations(
   if (disciplines.length > 0) {
     const selectedDiscs = [...disciplines, ...UNIVERSAL_DISCIPLINES];
     for (const disc of selectedDiscs) {
-      for (const [abbr] of SORTED_ABBREVIATIONS) {
-        const abbrDiscs = ABBREVIATION_DISCIPLINES.get(abbr);
-        if (abbrDiscs && abbrDiscs.includes(disc)) {
+      const set = DISCIPLINE_ABBR_INDEX.get(disc);
+      if (set) {
+        for (const abbr of set) {
           disciplineAbbrs.add(abbr);
         }
       }
     }
   }
 
+  // Fast scan the search pool once
+  const foundAbbrs = fastScanAbbreviations(searchPool);
+
   const matches: Array<[string, readonly [string, string]]> = [];
 
   for (const [abbr, entry] of SORTED_ABBREVIATIONS) {
-    const pattern = new RegExp(
-      `\\b${abbr.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`,
-      "i",
-    );
-
-    if (!pattern.test(searchPool)) continue;
+    if (!foundAbbrs.has(abbr)) continue;
 
     // Discipline mode: only include if it belongs to one of the detected disciplines
     if (disciplines.length > 0) {
       if (disciplineAbbrs.has(abbr)) {
         matches.push([abbr, entry]);
       }
-      // Skip abbreviations that don't belong to any detected discipline
     } else {
-      // Fallback: include any abbreviation that appears in the text
       matches.push([abbr, entry]);
     }
 
@@ -332,9 +386,9 @@ function findMatchingVocabulary(
   if (disciplines.length > 0) {
     const selectedDiscs = [...disciplines, ...UNIVERSAL_DISCIPLINES];
     for (const disc of selectedDiscs) {
-      for (const [en] of SORTED_VOCABULARY) {
-        const vocabDiscs = VOCABULARY_DISCIPLINES.get(en);
-        if (vocabDiscs && vocabDiscs.includes(disc)) {
+      const set = DISCIPLINE_VOCAB_INDEX.get(disc);
+      if (set) {
+        for (const en of set) {
           disciplineVocab.add(en);
         }
       }
