@@ -1,6 +1,12 @@
 import { getPref, getString } from "../../utils";
 import { TranslateService } from "./base";
-import { MEDICAL_ABBREVIATIONS, MEDICAL_VOCABULARY } from "./medical-glossary-data";
+import {
+  MEDICAL_ABBREVIATIONS,
+  MEDICAL_VOCABULARY,
+  ABBREVIATION_DISCIPLINES,
+  VOCABULARY_DISCIPLINES,
+  MAJOR_DISCIPLINES,
+} from "./medical-glossary-data";
 
 // ── Pre-built sorted entries (computed once on module load) ──
 const SORTED_ABBREVIATIONS = Array.from(MEDICAL_ABBREVIATIONS.entries())
@@ -17,8 +23,7 @@ const CORE_TERMS = [
 ];
 
 /**
- * Try to extract full-text context from the PDF associated with a Zotero item.
- * Returns the title + abstract + any extracted note text, up to 30K chars.
+ * Extract paper context (title + abstract + notes) for term matching.
  */
 function getPaperContext(itemId: number | undefined): string {
   if (!itemId) return "";
@@ -38,17 +43,15 @@ function getPaperContext(itemId: number | undefined): string {
     const abstract = topItem.getField("abstractNote") as string;
     if (abstract) parts.push(`Abstract: ${abstract}`);
 
-    // Also try to get the full text from note attachments
     const attachments = topItem.getAttachments();
     if (attachments) {
       for (const attId of attachments) {
-        if (parts.length >= 5) break; // Only take up to 4 notes
+        if (parts.length >= 5) break;
         try {
           const att = Zotero.Items.get(attId);
           if (att && att.isNote()) {
             const noteText = att.getNote();
             if (noteText) {
-              // Strip HTML tags for cleaner text
               const cleanText = noteText.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
               if (cleanText && cleanText.length > 50) {
                 parts.push(cleanText);
@@ -56,31 +59,96 @@ function getPaperContext(itemId: number | undefined): string {
             }
           }
         } catch {
-          // Skip invalid attachments silently
+          // Skip invalid attachments
         }
       }
     }
 
-    const fullContext = parts.join("\n\n");
-    // Cap at 30K chars to avoid memory issues
-    return fullContext.slice(0, 30000);
+    return parts.join("\n\n").slice(0, 30000);
   } catch {
     return "";
   }
 }
 
 /**
- * Find which abbreviations from our glossary appear in the source text
- * AND the paper context. Uses case-insensitive whole-word matching.
+ * Classify the paper's medical discipline using a lightweight LLM call.
+ * Returns a list of discipline names from MAJOR_DISCIPLINES.
+ */
+async function classifyPaperDiscipline(
+  sourceText: string,
+  paperContext: string,
+  apiURL: string,
+  secret: string,
+  model: string,
+): Promise<string[]> {
+  const sampleText = sourceText.slice(0, 500) + (paperContext ? "\n\n" + paperContext.slice(0, 1000) : "");
+  const disciplineList = MAJOR_DISCIPLINES.join("、");
+
+  const classifyPrompt = `请根据以下医学文献片段，判断其所属的学科分类（可多选，最多3个）。
+
+可选学科列表：${disciplineList}
+
+只输出学科名称，用逗号分隔，不要任何解释。
+
+文献内容：
+${sampleText}
+
+学科分类：`;
+
+  try {
+    const xhr = await Zotero.HTTP.request("POST", apiURL, {
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${secret}`,
+      },
+      body: JSON.stringify({
+        model,
+        messages: [{ role: "user", content: classifyPrompt }],
+        temperature: 0.1,
+        max_tokens: 50,
+        stream: false,
+      }),
+      responseType: "json",
+    });
+
+    if (xhr?.status !== 200) return [];
+
+    const content = xhr.response?.choices?.[0]?.message?.content || "";
+    const detected = content
+      .split(/[,，、]/)
+      .map((d: string) => d.trim())
+      .filter((d: string) => MAJOR_DISCIPLINES.includes(d));
+
+    return detected;
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Find matching abbreviations — discipline-filtered + text-matched.
  */
 function findMatchingAbbreviations(
   sourceText: string,
   paperContext: string,
+  disciplines: string[],
 ): Array<[string, readonly [string, string]]> {
-  // Search in both the source text AND the paper context
   const searchPool = paperContext
     ? sourceText.toUpperCase() + " " + paperContext.toUpperCase()
     : sourceText.toUpperCase();
+
+  // Collect abbreviations from matching disciplines
+  const disciplineAbbrs = new Set<string>();
+  if (disciplines.length > 0) {
+    for (const disc of disciplines) {
+      for (const [abbr] of SORTED_ABBREVIATIONS) {
+        const abbrDiscs = ABBREVIATION_DISCIPLINES.get(abbr);
+        if (abbrDiscs && abbrDiscs.includes(disc)) {
+          disciplineAbbrs.add(abbr);
+        }
+      }
+    }
+  }
 
   const matches: Array<[string, readonly [string, string]]> = [];
 
@@ -89,35 +157,53 @@ function findMatchingAbbreviations(
       `\\b${abbr.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`,
       "i",
     );
+
     if (pattern.test(searchPool)) {
-      matches.push([abbr, entry]);
+      if (disciplineAbbrs.size === 0 || disciplineAbbrs.has(abbr)) {
+        matches.push([abbr, entry]);
+      }
     }
     if (matches.length >= 200) break;
   }
 
-  if (matches.length > 0) {
-    return matches;
+  if (matches.length === 0) {
+    return SORTED_ABBREVIATIONS.filter(([abbr]) => CORE_TERMS.includes(abbr));
   }
 
-  return SORTED_ABBREVIATIONS.filter(([abbr]) => CORE_TERMS.includes(abbr));
+  return matches;
 }
 
 /**
- * Find which vocabulary terms appear in the source text AND paper context.
+ * Find matching vocabulary — discipline-filtered + text-matched.
  */
 function findMatchingVocabulary(
   sourceText: string,
   paperContext: string,
+  disciplines: string[],
 ): Array<[string, string]> {
   const searchPool = paperContext
     ? sourceText.toLowerCase() + " " + paperContext.toLowerCase()
     : sourceText.toLowerCase();
 
+  const disciplineVocab = new Set<string>();
+  if (disciplines.length > 0) {
+    for (const disc of disciplines) {
+      for (const [en] of SORTED_VOCABULARY) {
+        const vocabDiscs = VOCABULARY_DISCIPLINES.get(en);
+        if (vocabDiscs && vocabDiscs.includes(disc)) {
+          disciplineVocab.add(en);
+        }
+      }
+    }
+  }
+
   const matches: Array<[string, string]> = [];
 
   for (const [en, cn] of SORTED_VOCABULARY) {
     if ((en.includes(" ") || en.length > 4) && searchPool.includes(en)) {
-      matches.push([en, cn]);
+      if (disciplineVocab.size === 0 || disciplineVocab.has(en)) {
+        matches.push([en, cn]);
+      }
     }
     if (matches.length >= 100) break;
   }
@@ -130,12 +216,15 @@ function findMatchingVocabulary(
 }
 
 /**
- * Build the system prompt with ONLY the matching glossary terms for this text.
- * Uses both the selected text AND the full paper context for matching.
+ * Build the system prompt with discipline-filtered glossary terms.
  */
-function buildSystemPrompt(sourceText: string, paperContext: string): string {
-  const matchedAbbrs = findMatchingAbbreviations(sourceText, paperContext);
-  const matchedVocab = findMatchingVocabulary(sourceText, paperContext);
+function buildSystemPrompt(
+  sourceText: string,
+  paperContext: string,
+  disciplines: string[],
+): string {
+  const matchedAbbrs = findMatchingAbbreviations(sourceText, paperContext, disciplines);
+  const matchedVocab = findMatchingVocabulary(sourceText, paperContext, disciplines);
 
   const termRef = matchedAbbrs
     .map(([abbr, [fullEn, fullCn]]) => `${abbr}: ${fullEn} -> ${fullCn}`)
@@ -145,6 +234,10 @@ function buildSystemPrompt(sourceText: string, paperContext: string): string {
     .map(([en, cn]) => `${en} -> ${cn}`)
     .join("\n");
 
+  const discInfo = disciplines.length > 0
+    ? `\n\n当前文献已自动识别为：${disciplines.join("、")}相关领域。请优先使用该领域的标准术语。`
+    : "";
+
   const contextIntro = paperContext
     ? `\n\n以下为当前文献的全文上下文，用于理解术语含义（非原文，仅用于术语辅助匹配）：\n${paperContext.slice(0, 1000)}`
     : "";
@@ -153,7 +246,7 @@ function buildSystemPrompt(sourceText: string, paperContext: string): string {
 
 你的核心任务：将英文医学文献翻译为中文，严格遵循以下规则：
 
-1. **术语标准化**：优先使用《医学主题词表》(MeSH/CMeSH)中的标准译名。
+1. **术语标准化**：优先使用《医学主题词表》(MeSH/CMeSH)中的标准译名。${discInfo}
 
 以下是文中涉及的医学缩写对照参考（已自动匹配原文及全文中出现的术语）：
 ${termRef}
@@ -177,6 +270,46 @@ ${contextIntro}
 6. 输出格式：逐段翻译，段落之间用空行分隔。先给出翻译结果，再在末尾列出「关键术语注释」部分。`;
 }
 
+/**
+ * Post-process: check abbreviation translation consistency with glossary.
+ */
+function postProcessAbbreviationConsistency(
+  resultText: string,
+  matchedAbbrs: Array<[string, readonly [string, string]]>,
+): string {
+  let corrected = resultText;
+  const corrections: string[] = [];
+
+  for (const [abbr, [fullEn, standardCn]] of matchedAbbrs) {
+    const abbrEscaped = abbr.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const pattern = new RegExp(
+      `${abbrEscaped}([\\s\\S]{0,80}?)([\\u4e00-\\u9fff]{2,20})`,
+      "gi",
+    );
+
+    let match;
+    while ((match = pattern.exec(corrected)) !== null) {
+      const foundChinese = match[2];
+      if (foundChinese !== standardCn && !foundChinese.includes(standardCn)) {
+        const isReasonable = standardCn.includes(foundChinese) || foundChinese.includes(standardCn);
+        if (!isReasonable) {
+          corrections.push(`${abbr}：AI 译为「${foundChinese}」，词库标准译名为「${standardCn}」`);
+        }
+      }
+    }
+  }
+
+  if (corrections.length > 0) {
+    const uniqueCorrections = [...new Set(corrections)];
+    corrected +=
+      "\n\n---\n📋 **术语一致性检查**（以下术语的 AI 翻译与词库标准译名存在差异，请人工判断）：\n" +
+      uniqueCorrections.map((c) => `- ${c}`).join("\n");
+  }
+
+  return corrected;
+}
+
+// ── Stream parsing helpers ──
 interface ParsedResponse {
   content: string;
   finished: boolean;
@@ -201,6 +334,7 @@ function parseNonStreamResponse(obj: any): string {
   return "";
 }
 
+// ── Main translate function ──
 async function translate(
   data: Parameters<TranslateService["translate"]>[0],
 ): Promise<void> {
@@ -221,11 +355,21 @@ async function translate(
     refreshHandler();
   }
 
-  // Extract paper context (title + abstract + notes) for better term matching
+  // Step 1: Extract paper context
   const paperContext = getPaperContext(data.itemId);
 
-  // Build prompt with smart glossary matching using BOTH selected text + full paper
-  const systemPrompt = buildSystemPrompt(data.raw, paperContext);
+  // Step 2: Classify paper discipline (lightweight call) to filter glossary
+  let disciplines: string[] = [];
+  try {
+    disciplines = await classifyPaperDiscipline(
+      data.raw, paperContext, apiURL, data.secret || "", model,
+    );
+  } catch {
+    // Classification failed silently — will use text-based matching fallback
+  }
+
+  // Step 3: Build prompt with discipline-filtered glossary
+  const systemPrompt = buildSystemPrompt(data.raw, paperContext, disciplines);
   const userContent = `请翻译以下英文医学文献段落：\n\n${data.raw}`;
 
   const requestBody = {
@@ -238,6 +382,7 @@ async function translate(
     stream,
   };
 
+  // ── Streaming callback ──
   const streamCallback = (xmlhttp: XMLHttpRequest) => {
     let preLength = 0;
     let result = "";
@@ -258,9 +403,7 @@ async function translate(
           const { content, finished } = parseStreamResponse(obj);
 
           result += content;
-          if (finished) {
-            break;
-          }
+          if (finished) break;
         } catch {
           if (i === dataArray.length - 1) {
             buffer = "data:" + chunk;
@@ -275,11 +418,11 @@ async function translate(
 
       data.result = result.replace(/^\n\n/, "");
       preLength = e.target.response.length;
-
       refreshHandler();
     };
   };
 
+  // ── Non-streaming callback ──
   const nonStreamCallback = (xmlhttp: XMLHttpRequest) => {
     xmlhttp.onload = () => {
       try {
@@ -313,6 +456,10 @@ async function translate(
     data.status = "fail";
     throw `Request error: ${xhr?.status}`;
   }
+
+  // Step 4: Post-process consistency check
+  const matchedAbbrs = findMatchingAbbreviations(data.raw, paperContext, disciplines);
+  data.result = postProcessAbbreviationConsistency(data.result, matchedAbbrs);
   data.status = "success";
 }
 
