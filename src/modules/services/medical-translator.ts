@@ -114,15 +114,23 @@ function getPaperContext(itemId: number | undefined): string {
 }
 
 // ── Fast abbreviation scanner (single-pass mega-regex) ──
-function fastScanAbbreviations(searchPool: string): Set<string> {
-  const found = new Set<string>();
-  for (let i = 0; i < SORTED_ABBREVIATIONS.length; i += 500) {
-    const batch = SORTED_ABBREVIATIONS.slice(i, i + 500);
-    const pattern = new RegExp(
+// Precompiled patterns — abbreviations are static, so compile once at load time
+const BATCH_PATTERNS: RegExp[] = [];
+for (let i = 0; i < SORTED_ABBREVIATIONS.length; i += 500) {
+  const batch = SORTED_ABBREVIATIONS.slice(i, i + 500);
+  BATCH_PATTERNS.push(
+    new RegExp(
       batch.map(([a]) => `\\b${a.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`).join("|"),
       "gi",
-    );
+    ),
+  );
+}
+
+function fastScanAbbreviations(searchPool: string): Set<string> {
+  const found = new Set<string>();
+  for (const pattern of BATCH_PATTERNS) {
     let m;
+    pattern.lastIndex = 0;
     while ((m = pattern.exec(searchPool)) !== null) {
       found.add(m[0].toUpperCase());
     }
@@ -161,6 +169,21 @@ function findMatchingAbbreviations(
   return matches;
 }
 
+// ── Word index for fast vocabulary pre-filtering ──
+// Extracts all lowercase words from the search pool into a Set.
+// Used to quickly skip vocabulary entries whose first word isn't present.
+function buildWordIndex(text: string): Set<string> {
+  const words = new Set<string>();
+  let start = 0;
+  for (let i = 0; i <= text.length; i++) {
+    if (i === text.length || /\s/.test(text[i])) {
+      if (i > start) words.add(text.slice(start, i));
+      start = i + 1;
+    }
+  }
+  return words;
+}
+
 function findMatchingVocabulary(
   sourceText: string,
   paperContext: string,
@@ -169,9 +192,19 @@ function findMatchingVocabulary(
     ? sourceText.toLowerCase() + " " + paperContext.toLowerCase()
     : sourceText.toLowerCase();
 
+  // Build word index once, reuse for pre-filtering every vocabulary entry
+  const wordSet = buildWordIndex(searchPool);
+
   const matches: Array<[string, string]> = [];
   for (const [en, cn] of SORTED_VOCABULARY) {
-    if ((en.includes(" ") || en.length > 4) && searchPool.includes(en)) {
+    if (!(en.includes(" ") || en.length > 4)) continue;
+
+    // Pre-filter: for multi-word terms, skip includes() if the first word
+    // isn't even present in the search pool. This eliminates most entries
+    // instantly with O(1) Set lookup instead of O(n) substring scan.
+    if (en.includes(" ") && !wordSet.has(en.split(" ")[0])) continue;
+
+    if (searchPool.includes(en)) {
       matches.push([en, cn]);
     }
     if (matches.length >= 100) break;
@@ -357,9 +390,26 @@ async function translate(
 
   const refreshHandler = addon.api.getTemporaryRefreshHandler({ task: data });
 
+  // Debounced refresh: stream events fire rapidly (tens of times per second),
+  // but DOM updates are expensive. 50ms throttle keeps UI smooth without
+  // visible lag — the human eye can't distinguish refresh above ~20 Hz.
+  let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+  let pendingResult = "";
+
+  const debouncedRefresh = () => {
+    if (debounceTimer) return;
+    debounceTimer = setTimeout(() => {
+      debounceTimer = null;
+      if (pendingResult !== data.result) {
+        pendingResult = data.result;
+        refreshHandler();
+      }
+    }, 50);
+  };
+
   if (stream === false) {
     data.result = getString("status-translating");
-    refreshHandler();
+    refreshHandler();  // immediate: only fires once, no debounce needed
   }
 
   // Step 1: Extract paper context
@@ -411,7 +461,7 @@ async function translate(
       if (e.target.timeout) e.target.timeout = 0;
       data.result = result.replace(/^\n\n/, "");
       preLength = e.target.response.length;
-      refreshHandler();
+      debouncedRefresh();
     };
   };
 
@@ -452,6 +502,13 @@ async function translate(
   // Step 5: Save cache
   translationCache.set(cacheKey, { result: data.result, timestamp: Date.now() });
   saveCache(translationCache);
+
+  // Flush any pending debounced refresh before returning
+  if (debounceTimer) {
+    clearTimeout(debounceTimer);
+    debounceTimer = null;
+  }
+  refreshHandler();
 
   data.status = "success";
 }
