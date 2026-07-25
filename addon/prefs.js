@@ -129,3 +129,7 @@ pref("__prefsPrefix__.nllb.serveendpoint", "http://localhost:6060");
 pref("__prefsPrefix__.customGPT1.temperature", "1.0");
 pref("__prefsPrefix__.customGPT2.temperature", "1.0");
 pref("__prefsPrefix__.customGPT3.temperature", "1.0");
+pref("__prefsPrefix__.medicalTranslator.endPoint", "https://api.deepseek.com/v1/chat/completions");
+pref("__prefsPrefix__.medicalTranslator.model", "deepseek-v4-pro");
+pref("__prefsPrefix__.medicalTranslator.temperature", "0.3");
+pref("__prefsPrefix__.medicalTranslator.stream", true);
