@@ -22,6 +22,18 @@ const CORE_TERMS = [
   "OS", "PFS", "LVEF", "MACE", "CAD", "PE", "OSA", "CKD", "IBD",
 ];
 
+// ── "Always-include" disciplines ──
+// These disciplines' terms are always added to the prompt regardless of the
+// detected specialty, because they are universal to all medical papers:
+//   公共卫生  = medical statistics / epidemiology / study design terms
+//   基础医学  = basic sciences (cell biology, genetics, molecular biology)
+//   药理学    = pharmacology (drug names, PK/PD terms appear everywhere)
+const UNIVERSAL_DISCIPLINES = new Set([
+  "公共卫生",
+  "基础医学",
+  "药理学",
+]);
+
 /**
  * Extract paper context (title + abstract + notes) for term matching.
  */
@@ -71,62 +83,108 @@ function getPaperContext(itemId: number | undefined): string {
 }
 
 /**
- * Classify the paper's medical discipline using a lightweight LLM call.
- * Returns a list of discipline names from MAJOR_DISCIPLINES.
+ * Pure local classification: score each major discipline by counting how many
+ * of its abbreviation terms appear in the text. No API call, zero latency,
+ * zero cost. Falls back to discipline "全科" when no clear signal.
+ *
+ * Uses keyword-frequency heuristic: for each major discipline, we count how
+ * many of its abbreviations appear in the combined source + context text,
+ * then pick the top 1-3 disciplines.
+ *
+ * Bonus: also matches Chinese discipline keywords (like "泌尿" → "泌尿外科")
+ * against the text to boost the signal for non-abbreviation-rich papers.
  */
-async function classifyPaperDiscipline(
+function classifyPaperLocal(
   sourceText: string,
   paperContext: string,
-  apiURL: string,
-  secret: string,
-  model: string,
-): Promise<string[]> {
-  const sampleText = sourceText.slice(0, 500) + (paperContext ? "\n\n" + paperContext.slice(0, 1000) : "");
-  const disciplineList = MAJOR_DISCIPLINES.join("、");
+): string[] {
+  const searchPool = (sourceText + " " + paperContext).toUpperCase();
+  const searchPoolLower = (sourceText + " " + paperContext).toLowerCase();
 
-  const classifyPrompt = `请根据以下医学文献片段，判断其所属的学科分类（可多选，最多3个）。
+  // Chinese discipline keyword triggers (appear in title/abstract often)
+  const CN_DISC_KEYWORDS: Record<string, string[]> = {
+    "心血管系统": ["心血管", "心脏", "冠状动脉", "心肌", "血压", "血管", "动脉", "静脉"],
+    "呼吸系统": ["呼吸", "肺", "支气管", "哮喘", "慢阻肺", "COPD", "肺炎", "结核"],
+    "消化系统": ["消化", "胃", "肝", "胆", "肠", "胰腺", "食管", "结肠", "直肠"],
+    "肾脏与泌尿": ["肾", "泌尿", "膀胱", "前列腺", "透析", "尿液", "尿道"],
+    "内分泌与代谢": ["内分泌", "糖尿病", "甲状腺", "代谢", "胰岛素", "血糖"],
+    "血液系统": ["血液", "贫血", "白血病", "淋巴瘤", "骨髓", "血小板", "凝血"],
+    "神经与精神": ["神经", "脑", "癫痫", "痴呆", "帕金森", "精神", "抑郁", "焦虑"],
+    "肿瘤": ["肿瘤", "癌", "化疗", "放疗", "靶向", "免疫治疗", "转移"],
+    "感染与免疫": ["感染", "病毒", "细菌", "抗生素", "免疫", "疫苗", "传染"],
+    "儿科": ["儿童", "小儿", "新生儿", "婴儿", "幼儿", "先天"],
+    "妇产科": ["妇", "产", "子宫", "卵巢", "妊娠", "胎儿", "宫颈"],
+    "眼科": ["眼", "视网膜", "角膜", "白内障", "青光", "视力"],
+    "耳鼻喉科": ["耳", "鼻", "喉", "听力", "中耳", "鼻窦"],
+    "皮肤科": ["皮肤", "皮疹", "湿疹", "银屑", "荨麻疹", "黑色素"],
+    "骨科": ["骨", "关节", "骨折", "脊柱", "椎", "韧带", "肌腱"],
+    "麻醉与急重症": ["麻醉", "急诊", "重症", "ICU", "创伤", "休克"],
+    "影像与病理": ["影像", "CT", "MRI", "超声", "病理", "活检", "X线"],
+    "药理学": ["药物", "药代", "剂量", "给药", "代谢物", "不良反应"],
+    "基础医学": ["基因", "细胞", "蛋白", "分子", "信号", "受体", "酶", "DNA", "RNA"],
+    "公共卫生": ["统计", "流行", "队列", "随机", "meta", "风险", "发病率", "死亡率"],
+  };
 
-可选学科列表：${disciplineList}
+  // Score each discipline
+  const scores: Record<string, number> = {};
+  for (const disc of MAJOR_DISCIPLINES) {
+    let score = 0;
 
-只输出学科名称，用逗号分隔，不要任何解释。
+    // 1. Abbreviation hits in the text
+    for (const [abbr] of SORTED_ABBREVIATIONS) {
+      const abbrDiscs = ABBREVIATION_DISCIPLINES.get(abbr);
+      if (!abbrDiscs || !abbrDiscs.includes(disc)) continue;
 
-文献内容：
-${sampleText}
+      const pattern = new RegExp(
+        `\\b${abbr.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`,
+        "i",
+      );
+      if (pattern.test(searchPool)) {
+        score += 1;
+      }
+    }
 
-学科分类：`;
+    // 2. Chinese keyword hits (title/abstract often use Chinese)
+    const cnKeywords = CN_DISC_KEYWORDS[disc];
+    if (cnKeywords) {
+      for (const kw of cnKeywords) {
+        if (searchPoolLower.includes(kw.toLowerCase())) {
+          score += 3; // Keywords are stronger signals than abbreviation matches
+        }
+      }
+    }
 
-  try {
-    const xhr = await Zotero.HTTP.request("POST", apiURL, {
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${secret}`,
-      },
-      body: JSON.stringify({
-        model,
-        messages: [{ role: "user", content: classifyPrompt }],
-        temperature: 0.1,
-        max_tokens: 50,
-        stream: false,
-      }),
-      responseType: "json",
-    });
-
-    if (xhr?.status !== 200) return [];
-
-    const content = xhr.response?.choices?.[0]?.message?.content || "";
-    const detected = content
-      .split(/[,，、]/)
-      .map((d: string) => d.trim())
-      .filter((d: string) => MAJOR_DISCIPLINES.includes(d));
-
-    return detected;
-  } catch {
-    return [];
+    scores[disc] = score;
   }
+
+  // Find top disciplines with meaningful scores
+  const ranked = Object.entries(scores)
+    .filter(([, s]) => s > 0)
+    .sort(([, a], [, b]) => b - a);
+
+  if (ranked.length === 0) return [];
+
+  // Take top 1-3 disciplines (only those within 50% of the top score)
+  const topScore = ranked[0][1];
+  const threshold = Math.max(topScore * 0.5, 2);
+  const selected = ranked
+    .filter(([, s]) => s >= threshold)
+    .slice(0, 3)
+    .map(([d]) => d);
+
+  return selected;
 }
 
 /**
- * Find matching abbreviations — discipline-filtered + text-matched.
+ * Find matching abbreviations — discipline-first matching.
+ *
+ * When disciplines are detected: ONLY include abbreviations that belong
+ * to those disciplines AND appear in the text. This is the key speed
+ * optimization: by eliminating unrelated disciplines' terms from the
+ * prompt, we reduce token count drastically.
+ *
+ * When no discipline is detected: fall back to the standard text-based
+ * matching (every abbreviation that appears in the text).
  */
 function findMatchingAbbreviations(
   sourceText: string,
@@ -137,10 +195,12 @@ function findMatchingAbbreviations(
     ? sourceText.toUpperCase() + " " + paperContext.toUpperCase()
     : sourceText.toUpperCase();
 
-  // Collect abbreviations from matching disciplines
+  // When disciplines are detected, only collect abbreviations from those disciplines
+  // PLUS always include terms from universal disciplines (公共卫生, 基础医学, 药理学)
   const disciplineAbbrs = new Set<string>();
   if (disciplines.length > 0) {
-    for (const disc of disciplines) {
+    const selectedDiscs = [...disciplines, ...UNIVERSAL_DISCIPLINES];
+    for (const disc of selectedDiscs) {
       for (const [abbr] of SORTED_ABBREVIATIONS) {
         const abbrDiscs = ABBREVIATION_DISCIPLINES.get(abbr);
         if (abbrDiscs && abbrDiscs.includes(disc)) {
@@ -158,11 +218,19 @@ function findMatchingAbbreviations(
       "i",
     );
 
-    if (pattern.test(searchPool)) {
-      if (disciplineAbbrs.size === 0 || disciplineAbbrs.has(abbr)) {
+    if (!pattern.test(searchPool)) continue;
+
+    // Discipline mode: only include if it belongs to one of the detected disciplines
+    if (disciplines.length > 0) {
+      if (disciplineAbbrs.has(abbr)) {
         matches.push([abbr, entry]);
       }
+      // Skip abbreviations that don't belong to any detected discipline
+    } else {
+      // Fallback: include any abbreviation that appears in the text
+      matches.push([abbr, entry]);
     }
+
     if (matches.length >= 200) break;
   }
 
@@ -174,7 +242,10 @@ function findMatchingAbbreviations(
 }
 
 /**
- * Find matching vocabulary — discipline-filtered + text-matched.
+ * Find matching vocabulary — discipline-first matching.
+ *
+ * Same approach: when disciplines are detected, only include vocabulary
+ * terms that belong to those disciplines AND appear in the text.
  */
 function findMatchingVocabulary(
   sourceText: string,
@@ -187,7 +258,8 @@ function findMatchingVocabulary(
 
   const disciplineVocab = new Set<string>();
   if (disciplines.length > 0) {
-    for (const disc of disciplines) {
+    const selectedDiscs = [...disciplines, ...UNIVERSAL_DISCIPLINES];
+    for (const disc of selectedDiscs) {
       for (const [en] of SORTED_VOCABULARY) {
         const vocabDiscs = VOCABULARY_DISCIPLINES.get(en);
         if (vocabDiscs && vocabDiscs.includes(disc)) {
@@ -200,11 +272,17 @@ function findMatchingVocabulary(
   const matches: Array<[string, string]> = [];
 
   for (const [en, cn] of SORTED_VOCABULARY) {
-    if ((en.includes(" ") || en.length > 4) && searchPool.includes(en)) {
-      if (disciplineVocab.size === 0 || disciplineVocab.has(en)) {
+    if (!(en.includes(" ") || en.length > 4)) continue;
+    if (!searchPool.includes(en)) continue;
+
+    if (disciplines.length > 0) {
+      if (disciplineVocab.has(en)) {
         matches.push([en, cn]);
       }
+    } else {
+      matches.push([en, cn]);
     }
+
     if (matches.length >= 100) break;
   }
 
@@ -358,15 +436,8 @@ async function translate(
   // Step 1: Extract paper context
   const paperContext = getPaperContext(data.itemId);
 
-  // Step 2: Classify paper discipline (lightweight call) to filter glossary
-  let disciplines: string[] = [];
-  try {
-    disciplines = await classifyPaperDiscipline(
-      data.raw, paperContext, apiURL, data.secret || "", model,
-    );
-  } catch {
-    // Classification failed silently — will use text-based matching fallback
-  }
+  // Step 2: Classify paper discipline using PURE LOCAL keyword-scoring (no API, zero latency)
+  const disciplines = classifyPaperLocal(data.raw, paperContext);
 
   // Step 3: Build prompt with discipline-filtered glossary
   const systemPrompt = buildSystemPrompt(data.raw, paperContext, disciplines);
