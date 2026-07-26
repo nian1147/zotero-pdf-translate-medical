@@ -157,15 +157,6 @@ function findMatchingAbbreviations(
     if (matches.length >= 200) break;
   }
 
-  if (matches.length === 0) {
-    const CORE_TERMS = new Set([
-      "STEMI", "NSTEMI", "PCI", "CABG", "ACS", "HF", "AF", "MI", "HTN",
-      "COPD", "ARDS", "CVA", "TIA", "MRI", "CT", "PET", "DM", "RCT",
-      "OS", "PFS", "LVEF", "MACE", "CAD", "PE", "OSA", "CKD", "IBD",
-    ]);
-    return SORTED_ABBREVIATIONS.filter(([abbr]) => CORE_TERMS.has(abbr));
-  }
-
   return matches;
 }
 
@@ -208,10 +199,6 @@ function findMatchingVocabulary(
       matches.push([en, cn]);
     }
     if (matches.length >= 100) break;
-  }
-
-  if (matches.length === 0) {
-    return SORTED_VOCABULARY.slice(0, 50);
   }
 
   return matches;
