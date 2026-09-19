@@ -1,6 +1,6 @@
 {
   "name": "zotero-pdf-translate",
-  "version": "2.5.5",
+  "version": "2.5.6",
   "description": "Translate PDF, EPub, webpage, metadata, annotations, notes to the target language. Support 20+ translate services.",
   "config": {
     "addonName": "Translate for Zotero",
@@ -20,14 +20,14 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/windingwind/zotero-pdf-translate.git"
+    "url": "git+https://github.com/nian1147/zotero-pdf-translate-medical.git"
   },
   "author": "windingwind",
   "license": "AGPL-3.0-or-later",
   "bugs": {
-    "url": "https://github.com/windingwind/zotero-pdf-translate/issues"
+    "url": "https://github.com/nian1147/zotero-pdf-translate-medical/issues"
   },
-  "homepage": "https://github.com/windingwind/zotero-pdf-translate#readme",
+  "homepage": "https://github.com/nian1147/zotero-pdf-translate-medical#readme",
   "dependencies": {
     "franc": "^6.2.0",
     "iso639-js": "^1.1.3",

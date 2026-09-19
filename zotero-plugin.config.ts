@@ -1,6 +1,6 @@
 import { defineConfig } from "zotero-plugin-scaffold";
 import pkg from "./package.json";
-import { copyFileSync } from "fs";
+import { copyFileSync, existsSync } from "fs";
 
 export default defineConfig({
   source: ["src", "addon"],
@@ -8,11 +8,14 @@ export default defineConfig({
   name: pkg.config.addonName,
   id: pkg.config.addonID,
   namespace: pkg.config.addonRef,
-  updateURL: `https://github.com/{{owner}}/{{repo}}/releases/download/release/${
+  // Hardcoded to this fork: the {{owner}}/{{repo}} template resolves from
+  // package.json, which pointed at the upstream repo and made every install
+  // check upstream's update.json instead of ours.
+  updateURL: `https://raw.githubusercontent.com/nian1147/zotero-pdf-translate-medical/main/${
     pkg.version.includes("-") ? "update-beta.json" : "update.json"
   }`,
   xpiDownloadLink:
-    "https://github.com/{{owner}}/{{repo}}/releases/download/v{{version}}/{{xpiName}}.xpi",
+    "https://github.com/nian1147/zotero-pdf-translate-medical/releases/download/v{{version}}/{{xpiName}}.xpi",
 
   server: {
     asProxy: false,
@@ -42,16 +45,19 @@ export default defineConfig({
         outdir: "build/addon/chrome/content/scripts",
       },
     ],
-    // If you want to checkout update.json into the repository, uncomment the following lines:
-    // makeUpdateJson: {
-    //   hash: false,
-    // },
-    // hooks: {
-    //   "build:makeUpdateJSON": (ctx) => {
-    //     copyFileSync("build/update.json", "update.json");
-    //     copyFileSync("build/update-beta.json", "update-beta.json");
-    //   },
-    // },
+    // Generate update.json and check it into the repository so Zotero's
+    // auto-update mechanism picks up new releases.
+    makeUpdateJson: {
+      hash: false,
+    },
+    hooks: {
+      "build:makeUpdateJSON": () => {
+        copyFileSync("build/update.json", "update.json");
+        if (existsSync("build/update-beta.json")) {
+          copyFileSync("build/update-beta.json", "update-beta.json");
+        }
+      },
+    },
   },
   // release: {
   //   bumpp: {
