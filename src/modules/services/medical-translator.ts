@@ -318,7 +318,7 @@ async function translate(
     (getPref("medicalTranslator.endPoint") as string) ||
     "https://api.deepseek.com/v1/chat/completions";
   const model =
-    (getPref("medicalTranslator.model") as string) || "deepseek-v4-pro";
+    (getPref("medicalTranslator.model") as string) || "deepseek-flash";
   const temperature = parseFloat(
     (getPref("medicalTranslator.temperature") as string) || "0.3",
   );
