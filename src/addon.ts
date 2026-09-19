@@ -33,6 +33,7 @@ class Addon {
       queue: TranslateTask[];
       maximumQueueLength: number;
       batchTaskDelay: number;
+      maxConcurrentTasks: number;
       services: TranslationServices;
       cachedSourceLanguage: Record<number, string>;
       refreshTick: string;
@@ -60,6 +61,7 @@ class Addon {
         queue: [],
         maximumQueueLength: 100,
         batchTaskDelay: 1000,
+        maxConcurrentTasks: 3,
         services,
         cachedSourceLanguage: {},
         refreshTick: "",

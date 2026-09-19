@@ -79,6 +79,9 @@ function loadCustomGlossary(): Map<string, string> {
 }
 
 // ── Paper context extraction ──
+// Title + abstract only, capped at 1000 chars. Extracting note attachments
+// on every request was slow (HTML parsing on multi-MB notes) and blew up
+// the matching pool without improving term matching.
 function getPaperContext(itemId: number | undefined): string {
   if (!itemId) return "";
   try {
@@ -91,23 +94,7 @@ function getPaperContext(itemId: number | undefined): string {
     if (title) parts.push(`Title: ${title}`);
     const abstract = topItem.getField("abstractNote") as string;
     if (abstract) parts.push(`Abstract: ${abstract}`);
-    const attachments = topItem.getAttachments();
-    if (attachments) {
-      for (const attId of attachments) {
-        if (parts.length >= 5) break;
-        try {
-          const att = Zotero.Items.get(attId);
-          if (att && att.isNote()) {
-            const noteText = att.getNote();
-            if (noteText) {
-              const cleanText = noteText.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
-              if (cleanText && cleanText.length > 50) parts.push(cleanText);
-            }
-          }
-        } catch { /* skip */ }
-      }
-    }
-    return parts.join("\n\n").slice(0, 30000);
+    return parts.join("\n\n").slice(0, 1000);
   } catch {
     return "";
   }
@@ -154,7 +141,7 @@ function findMatchingAbbreviations(
     if (foundAbbrs.has(abbr)) {
       matches.push([abbr, entry]);
     }
-    if (matches.length >= 200) break;
+    if (matches.length >= 30) break;
   }
 
   return matches;
@@ -198,7 +185,7 @@ function findMatchingVocabulary(
     if (searchPool.includes(en)) {
       matches.push([en, cn]);
     }
-    if (matches.length >= 100) break;
+    if (matches.length >= 20) break;
   }
 
   return matches;
@@ -225,7 +212,7 @@ function buildSystemPrompt(
   if (customGlossary.size > 0) {
     const customRef = Array.from(customGlossary.entries())
       .filter(([k]) => k === k.toUpperCase() || k.includes(" "))
-      .slice(0, 100)
+      .slice(0, 30)
       .map(([en, cn]) => `${en} -> ${cn}`)
       .join("\n");
     if (customRef) {
@@ -250,81 +237,13 @@ ${termRef}
 ${vocabRef}
 ${contextIntro}
 
-2. **缩写处理**：翻译中遇到的医学缩写，使用格式【缩写：英文全称，中文全称】标注。
-
-3. **学术严谨性**：
+2. **学术严谨性**：
    - 不添加原文没有的信息
    - 不删减原文内容
    - 不曲解原文含义
    - 保持段落的逻辑结构
 
-4. **首次出现术语**：对专业术语首次出现时，在括号中附简要中文解释。
-
-5. **罕见术语**：对于新的或罕见的术语，给出参考译名并标注「译名供参考」。
-
-6. 输出格式：逐段翻译，段落之间用空行分隔。先给出翻译结果，再在末尾列出「关键术语注释」部分。`;
-}
-
-// ── Post-process: custom glossary enforcement + consistency check ──
-function postProcessAbbreviationConsistency(
-  resultText: string,
-  matchedAbbrs: Array<[string, readonly [string, string]]>,
-  customGlossary: Map<string, string>,
-): string {
-  let corrected = resultText;
-
-  // Step 1: Force-apply custom glossary
-  if (customGlossary.size > 0) {
-    for (const [en, customCn] of customGlossary) {
-      if (en === en.toUpperCase() && en.length <= 10) {
-        const escaped = en.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-        const bracketPattern = new RegExp(`【${escaped}[：:][^】]*】`, "gi");
-        corrected = corrected.replace(bracketPattern, `【${en}：${customCn}】`);
-        const barePattern = new RegExp(
-          `(?<![A-Za-z])${escaped}[：:]\\s*[\\u4e00-\\u9fff]{2,20}`,
-          "gi",
-        );
-        corrected = corrected.replace(barePattern, `${en}：${customCn}`);
-      }
-      if (en.includes(" ") || en.length > 4) {
-        const defaultCn = MEDICAL_VOCABULARY.get(en.toLowerCase());
-        if (defaultCn && defaultCn !== customCn) {
-          const escaped = defaultCn.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-          corrected = corrected.replace(new RegExp(escaped, "g"), customCn);
-        }
-      }
-    }
-  }
-
-  // Step 2: Consistency check
-  const corrections: string[] = [];
-  for (const [abbr, [fullEn, standardCn]] of matchedAbbrs) {
-    if (customGlossary.has(abbr) || customGlossary.has(abbr.toLowerCase())) continue;
-    const abbrEscaped = abbr.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const pattern = new RegExp(
-      `${abbrEscaped}([\\s\\S]{0,80}?)([\\u4e00-\\u9fff]{2,20})`,
-      "gi",
-    );
-    let match;
-    while ((match = pattern.exec(corrected)) !== null) {
-      const foundChinese = match[2];
-      if (foundChinese !== standardCn && !foundChinese.includes(standardCn)) {
-        const isReasonable = standardCn.includes(foundChinese) || foundChinese.includes(standardCn);
-        if (!isReasonable) {
-          corrections.push(`${abbr}：AI 译为「${foundChinese}」，词库标准译名为「${standardCn}」`);
-        }
-      }
-    }
-  }
-
-  if (corrections.length > 0) {
-    const uniqueCorrections = [...new Set(corrections)];
-    corrected +=
-      "\n\n---\n📋 **术语一致性检查**（以下术语的 AI 翻译与词库标准译名存在差异，请人工判断）：\n" +
-      uniqueCorrections.map((c) => `- ${c}`).join("\n");
-  }
-
-  return corrected;
+3. **输出格式**：逐段翻译，段落之间用空行分隔。只输出译文本身，不要附加任何标注、括号解释或术语注释。`;
 }
 
 // ── Stream parsing ──
@@ -482,11 +401,7 @@ async function translate(
     throw `Request error: ${xhr?.status}`;
   }
 
-  // Step 4: Post-process
-  const matchedAbbrs = findMatchingAbbreviations(data.raw, paperContext);
-  data.result = postProcessAbbreviationConsistency(data.result, matchedAbbrs, customGlossary);
-
-  // Step 5: Save cache
+  // Step 4: Save cache
   translationCache.set(cacheKey, { result: data.result, timestamp: Date.now() });
   saveCache(translationCache);
 

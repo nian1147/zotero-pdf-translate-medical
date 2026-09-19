@@ -223,10 +223,22 @@ async function onTranslateInBatch(
     Addon["data"]["translate"]["services"]["runTranslationTask"]
   >["1"] = {},
 ) {
-  for (const task of tasks) {
-    await addon.hooks.onTranslate(task, options);
-    await Zotero.Promise.delay(addon.data.translate.batchTaskDelay);
+  // Run tasks in a small worker pool instead of strictly sequential with
+  // batchTaskDelay — sequential batch translation was the main bottleneck
+  // when translating a whole paper at once.
+  const maxConcurrent = addon.data.translate.maxConcurrentTasks || 3;
+  const queue = [...tasks];
+  const runNext = async () => {
+    while (queue.length > 0) {
+      const task = queue.shift()!;
+      await addon.hooks.onTranslate(task, options);
+    }
+  };
+  const workers = [];
+  for (let i = 0; i < Math.min(maxConcurrent, tasks.length); i++) {
+    workers.push(runNext());
   }
+  await Promise.all(workers);
 }
 
 function onReaderPopupShow(

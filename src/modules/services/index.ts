@@ -342,14 +342,23 @@ export class TranslationServices {
 
       // Run extra tasks. Do not wait.
       if (task.extraTasks?.length) {
-        Promise.all(
-          task.extraTasks.map((extraTask) => {
-            return this.runTranslationTask(extraTask, {
+        const maxConcurrent = addon.data.translate.maxConcurrentTasks || 3;
+        const semaphore = { running: 0 };
+        const runWithLimit = async (extraTask: TranslateTask) => {
+          while (semaphore.running >= maxConcurrent) {
+            await Zotero.Promise.delay(50);
+          }
+          semaphore.running++;
+          try {
+            return await this.runTranslationTask(extraTask, {
               noCheckZoteroItemLanguage,
               noDisplay: true,
             });
-          }),
-        ).then(() => {
+          } finally {
+            semaphore.running--;
+          }
+        };
+        Promise.all(task.extraTasks.map((extraTask) => runWithLimit(extraTask))).then(() => {
           addon.hooks.onReaderTabPanelRefresh();
         });
       }
