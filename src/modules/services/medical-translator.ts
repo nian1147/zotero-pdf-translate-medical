@@ -11,12 +11,20 @@ const SORTED_VOCABULARY = Array.from(MEDICAL_VOCABULARY.entries())
 
 // ── Translation cache ──
 const CACHE_PREF_KEY = "medicalTranslator.cache";
-const MAX_CACHE_ENTRIES = 200;
+// Bump CACHE_VERSION whenever the prompt/output format changes, so entries
+// cached by older versions (with term annotations, etc.) are never reused.
+const CACHE_VERSION = "v2";
+const MAX_CACHE_ENTRIES = 100;
+// Skip caching long results: they rarely repeat, and bloating prefs.js
+// makes every save and Zotero startup slower.
+const MAX_CACHE_ENTRY_LENGTH = 2000;
 
 interface CacheEntry {
   result: string;
   timestamp: number;
 }
+
+let cacheDirty = false;
 
 function loadCache(): Map<string, CacheEntry> {
   try {
@@ -24,7 +32,11 @@ function loadCache(): Map<string, CacheEntry> {
     if (!raw) return new Map();
     const map = new Map<string, CacheEntry>();
     for (const [k, v] of Object.entries(JSON.parse(raw))) {
-      map.set(k, v as CacheEntry);
+      if (!k.startsWith(`${CACHE_VERSION}|`)) continue; // drop stale-format entries
+      const entry = v as CacheEntry;
+      if (entry.result?.length <= MAX_CACHE_ENTRY_LENGTH) {
+        map.set(k, entry);
+      }
     }
     return map;
   } catch {
@@ -33,6 +45,7 @@ function loadCache(): Map<string, CacheEntry> {
 }
 
 function saveCache(cache: Map<string, CacheEntry>): void {
+  if (!cacheDirty) return;
   try {
     if (cache.size > MAX_CACHE_ENTRIES) {
       const sorted = [...cache.entries()]
@@ -48,6 +61,7 @@ function saveCache(cache: Map<string, CacheEntry>): void {
       JSON.stringify(obj),
       true,
     );
+    cacheDirty = false;
   } catch { /* non-critical */ }
 }
 
@@ -285,9 +299,10 @@ async function translate(
   const stream = (getPref("medicalTranslator.stream") as boolean) ?? true;
 
   // Step 0: Check cache
-  const cacheKey = `${data.raw}|${data.langfrom || "en"}|${data.langto || "zh-CN"}|${model}`;
+  const cacheKey = `${CACHE_VERSION}|${data.raw}|${data.langfrom || "en"}|${data.langto || "zh-CN"}|${model}`;
   const cached = translationCache.get(cacheKey);
   if (cached) {
+    // Update LRU order in memory only; no need to persist on a pure hit.
     cached.timestamp = Date.now();
     data.result = cached.result;
     data.status = "success";
@@ -401,8 +416,11 @@ async function translate(
     throw `Request error: ${xhr?.status}`;
   }
 
-  // Step 4: Save cache
-  translationCache.set(cacheKey, { result: data.result, timestamp: Date.now() });
+  // Step 4: Save cache (only results under the size cap)
+  if (data.result.length <= MAX_CACHE_ENTRY_LENGTH) {
+    translationCache.set(cacheKey, { result: data.result, timestamp: Date.now() });
+    cacheDirty = true;
+  }
   saveCache(translationCache);
 
   // Flush any pending debounced refresh before returning
