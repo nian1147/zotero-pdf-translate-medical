@@ -231,7 +231,12 @@ async function onTranslateInBatch(
   const runNext = async () => {
     while (queue.length > 0) {
       const task = queue.shift()!;
-      await addon.hooks.onTranslate(task, options);
+      try {
+        await addon.hooks.onTranslate(task, options);
+      } catch (e) {
+        // Keep the pool alive: one failing task must not stall the rest.
+        ztoolkit.log("Batch translate task failed:", e);
+      }
     }
   };
   const workers = [];

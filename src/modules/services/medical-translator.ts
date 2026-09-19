@@ -224,8 +224,19 @@ function buildSystemPrompt(
 
   // Custom glossary at top (highest priority)
   if (customGlossary.size > 0) {
+    const seen = new Set<string>();
     const customRef = Array.from(customGlossary.entries())
-      .filter(([k]) => k === k.toUpperCase() || k.includes(" "))
+      // All-caps abbreviations, multi-word terms, and single words longer
+      // than 4 chars. Short lowercase words are too common to inject.
+      .filter(([k]) => k === k.toUpperCase() || k.includes(" ") || k.length > 4)
+      // loadCustomGlossary stores each term twice (original + lowercased);
+      // dedupe so both copies don't end up in the prompt.
+      .filter(([k]) => {
+        const lower = k.toLowerCase();
+        if (seen.has(lower)) return false;
+        seen.add(lower);
+        return true;
+      })
       .slice(0, 30)
       .map(([en, cn]) => `${en} -> ${cn}`)
       .join("\n");
@@ -264,9 +275,17 @@ ${contextIntro}
 interface ParsedResponse {
   content: string;
   finished: boolean;
+  error?: string;
 }
 
 function parseStreamResponse(obj: any): ParsedResponse {
+  if (obj.error) {
+    return {
+      content: "",
+      finished: true,
+      error: obj.error.message || obj.error.code || JSON.stringify(obj.error),
+    };
+  }
   if (obj.choices && obj.choices[0]) {
     const choice = obj.choices[0];
     return {
@@ -277,11 +296,18 @@ function parseStreamResponse(obj: any): ParsedResponse {
   return { content: "", finished: false };
 }
 
-function parseNonStreamResponse(obj: any): string {
-  if (obj.choices && obj.choices[0]) {
-    return obj.choices[0].message.content || "";
+function parseNonStreamResponse(obj: any): ParsedResponse {
+  if (obj.error) {
+    return {
+      content: "",
+      finished: true,
+      error: obj.error.message || obj.error.code || JSON.stringify(obj.error),
+    };
   }
-  return "";
+  if (obj.choices && obj.choices[0]) {
+    return { content: obj.choices[0].message.content || "", finished: true };
+  }
+  return { content: "", finished: true };
 }
 
 // ── Main translate function ──
@@ -298,8 +324,18 @@ async function translate(
   );
   const stream = (getPref("medicalTranslator.stream") as boolean) ?? true;
 
-  // Step 0: Check cache
-  const cacheKey = `${CACHE_VERSION}|${data.raw}|${data.langfrom || "en"}|${data.langto || "zh-CN"}|${model}`;
+  // Step 0: Load custom glossary, then check cache
+  const customGlossary = loadCustomGlossary();
+  // Include temperature and the custom glossary in the key: changing either
+  // must invalidate cached results, otherwise users get stale translations.
+  const glossaryHash =
+    customGlossary.size > 0
+      ? [...customGlossary.entries()]
+          .sort(([a], [b]) => a.localeCompare(b))
+          .map(([k, v]) => `${k}=${v}`)
+          .join(";")
+      : "";
+  const cacheKey = `${CACHE_VERSION}|${data.raw}|${data.langfrom || "en"}|${data.langto || "zh-CN"}|${model}|${temperature}|${glossaryHash}`;
   const cached = translationCache.get(cacheKey);
   if (cached) {
     // Update LRU order in memory only; no need to persist on a pure hit.
@@ -336,10 +372,7 @@ async function translate(
   // Step 1: Extract paper context
   const paperContext = getPaperContext(data.itemId);
 
-  // Step 2: Load custom glossary
-  const customGlossary = loadCustomGlossary();
-
-  // Step 3: Build prompt
+  // Step 2: Build prompt
   const systemPrompt = buildSystemPrompt(data.raw, paperContext, customGlossary);
   const userContent = `请翻译以下英文医学文献段落：\n\n${data.raw}`;
 
@@ -358,6 +391,7 @@ async function translate(
     let preLength = 0;
     let result = "";
     let buffer = "";
+    let streamError = "";
 
     xmlhttp.onprogress = (e: any) => {
       const newResponse = e.target.response.slice(preLength);
@@ -370,7 +404,12 @@ async function translate(
         if (!chunk.trim()) continue;
         try {
           const obj = JSON.parse(chunk);
-          const { content, finished } = parseStreamResponse(obj);
+          const { content, finished, error } = parseStreamResponse(obj);
+          if (error) {
+            streamError = error;
+            data.status = "fail";
+            break;
+          }
           result += content;
           if (finished) break;
         } catch {
@@ -380,7 +419,9 @@ async function translate(
       }
 
       if (e.target.timeout) e.target.timeout = 0;
-      data.result = result.replace(/^\n\n/, "");
+      data.result = streamError
+        ? `API error: ${streamError}`
+        : result.replace(/^\n\n/, "");
       preLength = e.target.response.length;
       debouncedRefresh();
     };
@@ -391,9 +432,19 @@ async function translate(
     xmlhttp.onload = () => {
       try {
         const responseObj = JSON.parse(xmlhttp.responseText);
-        const resultContent = parseNonStreamResponse(responseObj);
-        data.result = resultContent.replace(/^\n\n/, "");
-      } catch { return; }
+        const { content, error } = parseNonStreamResponse(responseObj);
+        if (error) {
+          data.status = "fail";
+          data.result = `API error: ${error}`;
+        } else {
+          data.result = content.replace(/^\n\n/, "");
+        }
+      } catch {
+        data.status = "fail";
+        data.result = "API error: invalid response";
+        refreshHandler();
+        return;
+      }
       refreshHandler();
     };
   };
@@ -416,8 +467,8 @@ async function translate(
     throw `Request error: ${xhr?.status}`;
   }
 
-  // Step 4: Save cache (only results under the size cap)
-  if (data.result.length <= MAX_CACHE_ENTRY_LENGTH) {
+  // Step 4: Save cache (only successful, non-empty results under the size cap)
+  if (data.status !== "fail" && data.result && data.result.length <= MAX_CACHE_ENTRY_LENGTH) {
     translationCache.set(cacheKey, { result: data.result, timestamp: Date.now() });
     cacheDirty = true;
   }
@@ -429,6 +480,14 @@ async function translate(
     debounceTimer = null;
   }
   refreshHandler();
+
+  if (data.status === "fail") return;
+  if (!data.result || !data.result.trim()) {
+    data.status = "fail";
+    data.result = "API error: empty response";
+    refreshHandler();
+    return;
+  }
 
   data.status = "success";
 }
