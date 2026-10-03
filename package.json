@@ -1,6 +1,6 @@
 {
   "name": "zotero-pdf-translate",
-  "version": "2.5.7",
+  "version": "2.5.8",
   "description": "Translate PDF, EPub, webpage, metadata, annotations, notes to the target language. Support 20+ translate services.",
   "config": {
     "addonName": "Translate for Zotero",
@@ -15,7 +15,7 @@
     "build": "tsc --noEmit && zotero-plugin build",
     "release": "zotero-plugin release",
     "lint": "prettier --write . && eslint . --fix",
-    "test": "echo \"Error: no test specified\" && exit 1",
+    "test": "node --test tests/*.test.cjs",
     "update-deps": "npm update --save"
   },
   "repository": {
