@@ -358,7 +358,9 @@ export class TranslationServices {
             semaphore.running--;
           }
         };
-        Promise.all(task.extraTasks.map((extraTask) => runWithLimit(extraTask))).then(() => {
+        Promise.all(
+          task.extraTasks.map((extraTask) => runWithLimit(extraTask)),
+        ).then(() => {
           addon.hooks.onReaderTabPanelRefresh();
         });
       }
@@ -384,8 +386,7 @@ export class TranslationServices {
           {
             if (item) {
               const savePosition = getPref("annotationTranslationPosition") as
-                | "comment"
-                | "body";
+                "comment" | "body";
               const savePositionInBody = getPref(
                 "annotationTranslationPositionInBody",
               ) as "before" | "after";
