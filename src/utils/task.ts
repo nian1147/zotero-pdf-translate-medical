@@ -232,7 +232,8 @@ export function addTranslateTask(
   ) {
     (getPref("extraEngines") as string)
       .split(",")
-      .filter((s) => s)
+      .map((id) => id.trim())
+      .filter((id) => addon.data.translate.services.getServiceById(id))
       .forEach((extraService) =>
         newTask.extraTasks.push({
           id: `${Zotero.Utilities.randomString()}-${new Date().getTime()}`,
@@ -321,30 +322,9 @@ export function addTranslateAbstractTask(
   }
 }
 
-const segmenter = new Intl.Segmenter(undefined, { granularity: "word" });
-
 function setDefaultService(task: TranslateTask) {
-  if (getPref("enableDict")) {
-    let wordCount = 0;
-    for (const s of segmenter.segment(task.raw.trim())) {
-      if (s.isWordLike) {
-        if (wordCount >= 1) {
-          wordCount = 2;
-          break;
-        }
-        wordCount = 1;
-      }
-    }
-    if (wordCount === 1) {
-      task.service = getPref("dictSource") as string;
-      task.candidateServices.push(getPref("translateSource") as string);
-    } else {
-      task.service = getPref("translateSource") as string;
-    }
-  } else {
-    task.service = getPref("translateSource") as string;
-  }
-
+  // Words and sentences use the same selected AI model.
+  task.service = getPref("translateSource") as string;
   task.service =
     task.service || addon.data.translate.services.getAllServices()[0].id;
 }

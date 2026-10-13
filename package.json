@@ -1,7 +1,7 @@
 {
   "name": "zotero-pdf-translate",
-  "version": "2.5.8",
-  "description": "Translate PDF, EPub, webpage, metadata, annotations, notes to the target language. Support 20+ translate services.",
+  "version": "2.5.9",
+  "description": "Translate PDF, EPub, webpages, metadata, annotations and notes with AI models and a medical glossary.",
   "config": {
     "addonName": "Translate for Zotero",
     "addonID": "zoteropdftranslate@euclpts.com",

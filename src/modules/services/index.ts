@@ -9,91 +9,25 @@ import {
   stripEmptyLines,
 } from "../../utils";
 
-import { Aliyun } from "./aliyun";
-import { Tencent } from "./tencent";
 import { ChatGPT, customGPT1, customGPT2, customGPT3, azureGPT } from "./gpt";
 import { MedicalTranslator } from "./medical-translator";
-import { Baidu } from "./baidu";
-import { BaiduField } from "./baidufield";
-import { Bing } from "./bing";
-import { BingDict } from "./bingdict";
-import { Caiyun } from "./caiyun";
-import { CambridgeDict } from "./cambridgedict";
 import { Claude } from "./claude";
-import { Cnki } from "./cnki";
-import { CollinsDict } from "./collinsdict";
-import { DeeplFree, DeeplPro } from "./deepl";
-import { FreeDictionaryAPI } from "./freedictionaryapi";
 import { Gemini } from "./gemini";
-import { Google, GoogleAPI } from "./google";
-import { Haici } from "./haici";
-import { HaiciDict } from "./haicidict";
-import { GramotaDict } from "./gramotadict";
-import { Huoshan } from "./huoshan";
-import { HuoshanWeb } from "./huoshanweb";
-import { LibreTranslate } from "./libretranslate";
-import { Microsoft } from "./microsoft";
-import { Mtranserver } from "./mtranserver";
-import { Niutrans } from "./niutrans";
-import { Nllb } from "./nllb";
-import { Openl } from "./openl";
-import { Pot } from "./pot";
 import { QwenMT } from "./qwenmt";
-import { WeblioDict } from "./webliodict";
-import { XFfrans } from "./xftrans";
-import { TencentTransmart } from "./tencenttransmart";
-import { Youdao } from "./youdao";
-import { YoudaoDict } from "./youdaodict";
-import { YoudaoZhiyun } from "./youdaozhiyun";
 import { YoudaoZhiyunLLM } from "./youdaozhiyunllm";
-import { DeepLCustom } from "./deeplcustom";
-import { DeepLX } from "./deeplx";
 
+// Only model APIs are available in the medical edition. Removing adapters here
+// also excludes them from the bundle and every UI/API service list.
 const register: TranslateService[] = [
-  Aliyun,
-  Baidu,
-  BaiduField,
-  Bing,
-  BingDict,
-  Caiyun,
-  CambridgeDict,
+  MedicalTranslator,
   Claude,
-  Cnki,
-  CollinsDict,
-  DeeplFree,
-  DeeplPro,
-  DeepLCustom,
-  DeepLX,
-  FreeDictionaryAPI,
   Gemini,
-  GramotaDict,
-  Google,
-  GoogleAPI,
   ChatGPT,
   customGPT1,
   customGPT2,
   customGPT3,
   azureGPT,
-  Haici,
-  HaiciDict,
-  MedicalTranslator,
-  Huoshan,
-  HuoshanWeb,
-  LibreTranslate,
-  Microsoft,
-  Mtranserver,
-  Niutrans,
-  Nllb,
-  Openl,
-  Pot,
   QwenMT,
-  Tencent,
-  TencentTransmart,
-  WeblioDict,
-  XFfrans,
-  Youdao,
-  YoudaoDict,
-  YoudaoZhiyun,
   YoudaoZhiyunLLM,
 ];
 
@@ -103,41 +37,14 @@ export class TranslationServices {
   );
 
   /**
-   * Sort the TranslateService list by the following rules:
-   * 1. Free and no-config services (no secret, no config) come first.
-   * 2. All other services are sorted by `id` in ascending order (case-insensitive).
-   * 3. Services whose `id` starts with "custom" are placed last
-   *    (sorted by `id` in ascending order within this group).
+   * Show medical translation first, built-in model APIs alphabetically, and
+   * custom interfaces last.
    */
   private sortServices<T extends TranslateService>(services: T[]) {
     return services.sort((a, b) => {
       const rank = (s: T) => {
-        const needsSecret = !!s.defaultSecret || !!s.secretValidator;
-        const hasConfig = !!s.config;
-        const needExternalConfig = s.requireExternalConfig;
-
-        // Rank for sentence services
-        if (s.type === "sentence") {
-          // Group 4: "custom" at the start → last
-          if (s.id.startsWith("custom")) return 3;
-
-          // Group 1: Free sentence services (no secret, no external config)
-          if (!needsSecret && !needExternalConfig) return 0;
-
-          // Group 2: No-secret but requires external config
-          if (!needsSecret && needExternalConfig) return 1;
-
-          // Group 3: Needs secret but no config
-          if (needsSecret && !hasConfig) return 2;
-
-          // Default (Sentence service needs secret and has config) — also rank 2
-          return 2;
-        }
-        // Rank for word services
-        else {
-          // Default //TODO Modify it if necessary in the future
-          return 0;
-        }
+        if (s.id === "medical-translator") return 0;
+        return s.id.startsWith("custom") ? 2 : 1;
       };
 
       const ra = rank(a);
@@ -358,7 +265,9 @@ export class TranslationServices {
             semaphore.running--;
           }
         };
-        Promise.all(task.extraTasks.map((extraTask) => runWithLimit(extraTask))).then(() => {
+        Promise.all(
+          task.extraTasks.map((extraTask) => runWithLimit(extraTask)),
+        ).then(() => {
           addon.hooks.onReaderTabPanelRefresh();
         });
       }

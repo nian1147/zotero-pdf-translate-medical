@@ -69,39 +69,6 @@ function buildPrefsPane() {
   ztoolkit.UI.replaceElement(
     {
       tag: "menulist",
-      id: makeId("wordServices"),
-      attributes: {
-        value: getPref("dictSource") as string,
-        native: "true",
-      },
-      classList: ["use-word-service"],
-      listeners: [
-        {
-          type: "command",
-          listener: (e: Event) => {
-            onPrefsEvents("setWordService");
-          },
-        },
-      ],
-      children: [
-        {
-          tag: "menupopup",
-          children: services.getAllServicesWithType("word").map((s) => ({
-            tag: "menuitem",
-            attributes: {
-              label: services.getServiceNameByID(s.id),
-              value: s.id,
-            },
-          })),
-        },
-      ],
-    },
-    doc.querySelector(`#${makeId("wordServices-placeholder")}`)!,
-  );
-
-  ztoolkit.UI.replaceElement(
-    {
-      tag: "menulist",
       id: makeId("langfrom"),
       attributes: {
         value: getPref("sourceLanguage") as string,
@@ -211,18 +178,6 @@ function buildPrefsPane() {
     });
 
   doc
-    .querySelector(`#${makeId("showPlayBtn")}`)
-    ?.addEventListener("command", (e: Event) => {
-      onPrefsEvents("setShowPlayBtn");
-    });
-
-  doc
-    .querySelector(`#${makeId("useWordService")}`)
-    ?.addEventListener("command", (e: Event) => {
-      onPrefsEvents("setUseWordService");
-    });
-
-  doc
     .querySelector(`#${makeId("hideUnconfiguredServices")}`)
     ?.addEventListener("command", () => {
       addon.hooks.onReaderTabPanelRefresh();
@@ -232,12 +187,6 @@ function buildPrefsPane() {
     .querySelector(`#${makeId("sentenceServicesSecret")}`)
     ?.addEventListener("blur", (e: Event) => {
       onPrefsEvents("updateSentenceSecret");
-    });
-
-  doc
-    .querySelector(`#${makeId("wordServicesSecret")}`)
-    ?.addEventListener("blur", (e: Event) => {
-      onPrefsEvents("updateWordSecret");
     });
 
   doc
@@ -285,10 +234,7 @@ function updatePrefsPaneDefault() {
   onPrefsEvents("setAutoTranslateAnnotation", false);
   onPrefsEvents("setAnnotationTranslationPosition", false);
   onPrefsEvents("setEnablePopup", false);
-  onPrefsEvents("setShowPlayBtn", false);
-  onPrefsEvents("setUseWordService", false);
   onPrefsEvents("setSentenceSecret", false);
-  onPrefsEvents("setWordSecret", false);
   onPrefsEvents("setEnableAutoTagAnnotation", false);
 }
 
@@ -348,29 +294,6 @@ function onPrefsEvents(type: string, fromElement: boolean = true) {
           : (getPref("enableNote") as boolean);
         const hidden = !elemValue;
         setDisabled("enable-popup-addtonote", hidden);
-      }
-      break;
-    case "setShowPlayBtn":
-      {
-        const elemValue = fromElement
-          ? (doc.querySelector(`#${makeId("showPlayBtn")}`) as XUL.Checkbox)
-              .checked
-          : (getPref("showPlayBtn") as boolean);
-        const hidden = !elemValue;
-        setDisabled("show-play-btn", hidden);
-      }
-      break;
-    case "setUseWordService":
-      {
-        const elemValue = fromElement
-          ? (doc.querySelector(`#${makeId("useWordService")}`) as XUL.Checkbox)
-              .checked
-          : (getPref("enableDict") as boolean);
-        const hidden = !elemValue;
-        setDisabled("use-word-service", hidden);
-        if (!hidden) {
-          onPrefsEvents("setShowPlayBtn", fromElement);
-        }
       }
       break;
     case "setEnableAutoTagAnnotation":
@@ -447,52 +370,6 @@ function onPrefsEvents(type: string, fromElement: boolean = true) {
         } else {
           statusButton.hidden = true;
         }
-      }
-      break;
-    case "setWordService":
-      {
-        setPref(
-          "dictSource",
-          (
-            doc.querySelector(`#${makeId("wordServices")}`) as XUL.MenuList
-          ).getAttribute("value")!,
-        );
-        onPrefsEvents("setWordSecret", fromElement);
-      }
-      break;
-    case "updateWordSecret":
-      {
-        const serviceId = getPref("dictSource") as string;
-        const inputElem = doc.querySelector(
-          `#${makeId("wordServicesSecret")}`,
-        ) as HTMLInputElement;
-        const trimmedValue = inputElem.value.trim();
-        if (trimmedValue !== inputElem.value) {
-          inputElem.value = trimmedValue;
-        }
-        if (trimmedValue !== getServiceSecret(serviceId)) {
-          setServiceSecret(serviceId, trimmedValue);
-        }
-      }
-      break;
-    case "setWordSecret":
-      {
-        const serviceId = getPref("dictSource") as string;
-        const secretCheckResult = validateServiceSecret(
-          serviceId,
-          (validateResult) => {
-            if (fromElement && !validateResult.status) {
-              addon.data.prefs.window?.alert(
-                `You see this because the translation service ${serviceId} requires SECRET, which is NOT correctly set.\n\nDetails:\n${validateResult.info}`,
-              );
-            }
-          },
-        );
-        (
-          doc.querySelector(
-            `#${makeId("wordServicesSecret")}`,
-          ) as HTMLInputElement
-        ).value = secretCheckResult.secret;
       }
       break;
     case "setSourceLanguage":
