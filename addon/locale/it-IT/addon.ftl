@@ -47,7 +47,7 @@ service-errorPrefix=[Errore nella richiesta]
     Si prega di usare un altro servizio di traduzione o di segnalare il problema qui: 
     https://github.com/windingwind/zotero-pdf-translate/issues
     
-    Il messaggio seguente non è di Zotero o dell'estensione Translate ma proviene da
+    Il messaggio seguente non è di Zotero o dell'estensione MedLex Translate ma proviene da
 
 service-dialog-config=Config
 service-dialog-title={ $service } Config
@@ -146,7 +146,7 @@ service-youdaozhiyunllm-dialog-stream=Stream
 readerpopup-translate-label=Traduci
 readerpopup-addToNote-label=Aggiungi traduzione alla nota
 
-pref-title=Translate
+pref-title=MedLex Translate
 
 field-titleTranslation=Traduzione del titolo
 field-abstractTranslation=Traduzione dell'Abstract

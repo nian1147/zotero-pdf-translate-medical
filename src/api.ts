@@ -1,6 +1,6 @@
 import { getPref } from "./utils/prefs";
 import { TranslateTask } from "./utils/task";
-import { version } from "../package.json";
+import { config, version } from "../package.json";
 
 /**
  * To plugin developers: Please use this API to translate your custom text.
@@ -84,13 +84,13 @@ async function translate(
   serviceOrOptions = serviceOrOptions || {};
 
   if (!isDeprecatedCall && !(serviceOrOptions as any).pluginID) {
-    throw `[Translate for Zotero:api.translate] pluginID is required since 1.1.0-23. Please contact the plugin developer for more information.`;
+    throw `[${config.addonName}:api.translate] pluginID is required since 1.1.0-23. Please contact the plugin developer for more information.`;
   }
 
   if (isDeprecatedCall) {
     Zotero.warn(
       new Error(
-        "[Translate for Zotero:api.translate] This call is deprecated. Please use `translate(raw, options)` instead.",
+        `[${config.addonName}:api.translate] This call is deprecated. Please use \`translate(raw, options)\` instead.`,
       ),
     );
   }

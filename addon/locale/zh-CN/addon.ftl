@@ -153,7 +153,7 @@ service-youdaozhiyunllm-dialog-stream=流式输出
 readerpopup-translate-label=翻译
 readerpopup-addToNote-label=添加翻译至笔记
 
-pref-title=翻译
+pref-title=MedLex 医学翻译
 
 field-titleTranslation=标题翻译
 field-abstractTranslation=摘要翻译

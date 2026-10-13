@@ -4,7 +4,7 @@
       "updates": [
         {
           "version": "2.5.9",
-          "update_link": "https://github.com/nian1147/zotero-pdf-translate-medical/releases/download/v2.5.9/translate-for-zotero.xpi",
+          "update_link": "https://github.com/nian1147/zotero-pdf-translate-medical/releases/download/v2.5.9/med-lex-translate.xpi",
           "applications": {
             "zotero": {
               "strict_min_version": "7.0.0",

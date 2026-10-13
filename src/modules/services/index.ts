@@ -243,7 +243,7 @@ export class TranslationServices {
           task.result = task.result.replace(regex, "");
         } catch (e) {
           ztoolkit.log("Invalid result regex", e);
-          task.result = `Invalid result regex: ${resultRegex}. Please check settings > Translate > Advanced > Result Regex.`;
+          task.result = `Invalid result regex: ${resultRegex}. Please check settings > ${getString("pref-title")} > Advanced > Result Regex.`;
         }
       }
 

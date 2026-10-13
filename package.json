@@ -3,7 +3,7 @@
   "version": "2.5.9",
   "description": "Translate PDF, EPub, webpages, metadata, annotations and notes with AI models and a medical glossary.",
   "config": {
-    "addonName": "Translate for Zotero",
+    "addonName": "MedLex Translate",
     "addonID": "zoteropdftranslate@euclpts.com",
     "addonRef": "zoteropdftranslate",
     "prefsPrefix": "extensions.zotero.ZoteroPDFTranslate",
