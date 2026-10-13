@@ -3,7 +3,7 @@
 [![zotero target version](https://img.shields.io/badge/Zotero-7%2F8%2F9-green?style=flat-square&logo=zotero&logoColor=CC2936)](https://www.zotero.org)
 [![License](https://img.shields.io/badge/License-AGPL%203.0-orange?style=flat-square)](https://www.gnu.org/licenses/agpl-3.0.html)
 
-本插件是 [zotero-pdf-translate](https://github.com/windingwind/zotero-pdf-translate) 的医学翻译定制版,在保留原版全部功能(PDF/EPub/网页翻译、标题/摘要翻译、注释翻译、独立翻译窗口等)的基础上,针对医学文献做了深度定制。
+本插件是 [zotero-pdf-translate](https://github.com/windingwind/zotero-pdf-translate) 的医学翻译定制版,支持 PDF/EPub/网页翻译、标题/摘要翻译、注释翻译和独立翻译窗口,并针对医学文献做了深度定制。翻译服务仅保留 AI 模型接口。
 
 ## 与上游版本的区别
 
@@ -15,6 +15,8 @@
 | 📝 纯译文输出 | 只输出译文本身,不额外添加术语注释;原文已有的括号、数字和解释完整保留 |
 | ⚡ 性能优化 | 上下文只取标题+摘要(1000 字符)、术语注入上限收紧、翻译缓存、批量翻译 3 并发 |
 | 🔄 自动更新 | 已配置 update.json,新版发布后 Zotero 会自动提示更新 |
+| 🤖 仅 AI 模型接口 | 医学翻译 (DeepSeek)、OpenAI、Azure OpenAI、Claude、Gemini、Qwen-MT、有道大模型和三个自定义 OpenAI 兼容接口 |
+| 🐥 自定义头像 | 设置页、插件管理、阅读器翻译栏和菜单统一使用小鸡头像 |
 
 ## 安装
 
@@ -30,11 +32,17 @@
 
 **第 2 步:切换翻译服务**
 
-Zotero → `编辑` → `设置` → `Translate` → `通用` 页,把翻译引擎切换为 `medical-translator`。
+Zotero → `编辑` → `设置` → `Translate` → `通用` 页,选择“医学翻译 (DeepSeek)” (`medical-translator`)。新安装或升级时原服务已被移除,会默认选择这一服务;已有 AI 服务选择及其密钥、模型和接口配置会保留。
 
 **第 3 步:填入 Key 并确认模型**
 
 在设置里填入你的 API Key。模型默认 `deepseek-flash`(快速模型),也可按需改成其他 DeepSeek 模型;API 地址默认官方接口,使用中转/代理时按需修改。
+
+### 其他 AI 模型
+
+可选择 OpenAI、Azure OpenAI、Claude、Gemini、Qwen-MT 或有道大模型,填写对应服务的密钥并点击“配置”。其他提供 OpenAI 兼容 API 的模型,包括中转服务和本地模型,可使用“自定义 AI 1/2/3”,设置完整接口地址和模型名。单词与句子均由当前选中的 AI 服务翻译。
+
+必应、CNKI、Google 翻译、DeepL、传统云翻译及词典服务不再提供;与词典关联的播放发音设置一并移除。选择 AI 接口意味着翻译需要相应接口配置,使用云 API 时可能产生费用。
 
 ### 自定义术语表(可选)
 
@@ -55,6 +63,13 @@ PCI → 经皮冠状动脉介入治疗
 - 整篇 PDF 批量翻译:选中多段文字后批量翻译,3 个任务并发执行
 
 ## 更新
+
+### v2.5.9
+
+- 服务注册表仅保留上述 10 个 AI 接口,设置页、阅读器、独立窗口、密钥管理和插件 API 使用相同列表;传统翻译和词典适配器不再打包。
+- 移除词典服务和播放发音设置,单词直接使用选中的 AI 模型,避免调用已移除的词典。
+- 无效或已移除的旧服务回退到医学翻译;清理多引擎列表中的已移除服务,保留已有 AI 密钥、模型、接口、自定义术语和语言设置。
+- 设置页、插件管理、菜单及阅读器翻译栏改用自定义小鸡头像。
 
 ### v2.5.8
 

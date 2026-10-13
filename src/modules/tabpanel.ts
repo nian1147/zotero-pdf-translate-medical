@@ -14,12 +14,12 @@ export function registerReaderTabPanel() {
     pluginID: config.addonID,
     header: {
       l10nID: getLocaleID("itemPaneSection-header"),
-      icon: `chrome://${config.addonRef}/content/icons/section-16.svg`,
+      icon: `chrome://${config.addonRef}/content/icons/avatar-16.png`,
     },
     sidenav: {
       l10nID: getLocaleID("itemPaneSection-sidenav"),
-      icon: `chrome://${config.addonRef}/content/icons/section-20.svg`,
-      // @ts-ignore
+      icon: `chrome://${config.addonRef}/content/icons/avatar-20.png`,
+      // @ts-ignore Zotero supports this section option before the types do.
       orderable: false,
     },
     bodyXHTML: "<translator-plugin-panel />",
