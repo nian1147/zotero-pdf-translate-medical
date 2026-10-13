@@ -1,7 +1,7 @@
 itemPaneSection-header =
-    .label = Translate
+    .label = MedLex Translate
 itemPaneSection-sidenav =
-    .tooltiptext = Translate
+    .tooltiptext = MedLex Translate
 itemPaneSection-fullHeight =
     .tooltiptext = Full height
 itemPaneSection-openStandalone =

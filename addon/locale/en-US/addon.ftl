@@ -48,7 +48,7 @@ service-errorPrefix=[Request Error]
     Use another translation service or post the issue here: 
     https://github.com/windingwind/zotero-pdf-translate/issues
     
-    The message below is not Zotero or the Translate plugin, but from
+    The message below is not Zotero or MedLex Translate, but from
 
 service-dialog-config=Config
 service-dialog-title={ $service } Config
@@ -153,7 +153,7 @@ service-youdaozhiyunllm-dialog-stream=Stream
 readerpopup-translate-label=Translate
 readerpopup-addToNote-label=Add Translation to Note
 
-pref-title=Translate
+pref-title=MedLex Translate
 
 field-titleTranslation=Title Translation
 field-abstractTranslation=Abstract Translation

@@ -1,9 +1,11 @@
-# Translate for Zotero — 医学翻译版
+# MedLex Translate — 医学翻译
 
 [![zotero target version](https://img.shields.io/badge/Zotero-7%2F8%2F9-green?style=flat-square&logo=zotero&logoColor=CC2936)](https://www.zotero.org)
 [![License](https://img.shields.io/badge/License-AGPL%203.0-orange?style=flat-square)](https://www.gnu.org/licenses/agpl-3.0.html)
 
-本插件是 [zotero-pdf-translate](https://github.com/windingwind/zotero-pdf-translate) 的医学翻译定制版,支持 PDF/EPub/网页翻译、标题/摘要翻译、注释翻译和独立翻译窗口,并针对医学文献做了深度定制。翻译服务仅保留 AI 模型接口。
+**MedLex Translate** 是面向医学文献的 AI 翻译插件。MedLex 将医学 (Medical) 与词汇 (Lexicon) 的意象组合,体现医学术语和文献翻译的用途。中文界面显示为“MedLex 医学翻译”。
+
+本插件基于 [zotero-pdf-translate](https://github.com/windingwind/zotero-pdf-translate),支持 PDF/EPub/网页翻译、标题/摘要翻译、注释翻译和独立翻译窗口,并针对医学文献做了深度定制。翻译服务仅保留 AI 模型接口。
 
 ## 与上游版本的区别
 
@@ -20,7 +22,7 @@
 
 ## 安装
 
-1. 从 [Releases](https://github.com/nian1147/zotero-pdf-translate-medical/releases) 下载最新的 `translate-for-zotero.xpi`
+1. 从 [Releases](https://github.com/nian1147/zotero-pdf-translate-medical/releases) 下载最新的 `med-lex-translate.xpi` (v2.5.8 及更早版本的文件名为 `translate-for-zotero.xpi`)
 2. 打开 Zotero → `工具` → `插件` → 右上角齿轮 → `从文件安装插件`
 3. 选择下载的 `.xpi` 文件,重启 Zotero 完成安装
 
@@ -32,7 +34,7 @@
 
 **第 2 步:切换翻译服务**
 
-Zotero → `编辑` → `设置` → `Translate` → `通用` 页,选择“医学翻译 (DeepSeek)” (`medical-translator`)。新安装或升级时原服务已被移除,会默认选择这一服务;已有 AI 服务选择及其密钥、模型和接口配置会保留。
+Zotero → `编辑` → `设置` → `MedLex 医学翻译` 页,选择“医学翻译 (DeepSeek)” (`medical-translator`)。新安装或升级时原服务已被移除,会默认选择这一服务;已有 AI 服务选择及其密钥、模型和接口配置会保留。
 
 **第 3 步:填入 Key 并确认模型**
 
@@ -66,6 +68,7 @@ PCI → 经皮冠状动脉介入治疗
 
 ### v2.5.9
 
+- 插件更名为 **MedLex Translate**,中文界面显示“MedLex 医学翻译”;插件管理、设置页、阅读器和独立窗口同步更新名称。插件 ID 与配置命名空间保持不变,可覆盖升级。
 - 服务注册表仅保留上述 10 个 AI 接口,设置页、阅读器、独立窗口、密钥管理和插件 API 使用相同列表;传统翻译和词典适配器不再打包。
 - 移除词典服务和播放发音设置,单词直接使用选中的 AI 模型,避免调用已移除的词典。
 - 无效或已移除的旧服务回退到医学翻译;清理多引擎列表中的已移除服务,保留已有 AI 密钥、模型、接口、自定义术语和语言设置。
